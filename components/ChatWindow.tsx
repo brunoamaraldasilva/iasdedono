@@ -1,7 +1,8 @@
 'use client'
 
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
+import { SearchStatus } from './SearchStatus'
 import type { ChatMessage } from '@/types/chat'
 
 interface ChatWindowProps {
@@ -18,9 +19,42 @@ export function ChatWindow({
   agentName = 'Assistant',
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const [webSources, setWebSources] = useState<{ title: string; link: string }[]>([])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
+
+  // Extract web sources from last assistant message
+  useEffect(() => {
+    const lastMessage = messages[messages.length - 1]
+    if (lastMessage?.role === 'assistant') {
+      const content = lastMessage.content
+      const sourcesMatch = content.match(/---\n\*\*Fontes da Busca Web:\*\*\n([\s\S]*?)$/)
+
+      if (sourcesMatch) {
+        const sourcesText = sourcesMatch[1]
+        const sources = sourcesText
+          .split('\n')
+          .filter(line => line.startsWith('- ['))
+          .map(line => {
+            const titleMatch = line.match(/\[([^\]]+)\]/)
+            const linkMatch = line.match(/\(([^)]+)\)/)
+            return {
+              title: titleMatch?.[1] || '',
+              link: linkMatch?.[1] || ''
+            }
+          })
+        setWebSources(sources)
+      } else {
+        setWebSources([])
+      }
+    }
+  }, [messages])
+
+  // Helper function to remove sources section from message content for display
+  const getMessageContentWithoutSources = (content: string) => {
+    return content.replace(/---\n\*\*Fontes da Busca Web:\*\*\n[\s\S]*?$/, '').trim()
   }
 
   useEffect(() => {
@@ -37,6 +71,11 @@ export function ChatWindow({
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 md:px-6 py-4 md:py-6 space-y-3 md:space-y-4">
+        {/* Web Search Status */}
+        {(loading && webSources.length === 0) || webSources.length > 0 ? (
+          <SearchStatus isSearching={loading && webSources.length === 0} sources={webSources} />
+        ) : null}
+
         {isLoadingMessages ? (
           <div className="flex items-center justify-center h-full">
             <div className="text-center">
@@ -75,6 +114,7 @@ export function ChatWindow({
                   {msg.role === 'assistant' ? (
                     <div className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none">
                       <ReactMarkdown
+                        children={getMessageContentWithoutSources(msg.content)}
                         components={{
                           p: ({ node, ...props }) => (
                             <p className="mb-2 last:mb-0" {...props} />
@@ -110,9 +150,7 @@ export function ChatWindow({
                             <h3 className="text-sm font-bold mb-1" {...props} />
                           ),
                         }}
-                      >
-                        {msg.content}
-                      </ReactMarkdown>
+                      />
                     </div>
                   ) : (
                     <p className="text-sm break-words">{msg.content}</p>
