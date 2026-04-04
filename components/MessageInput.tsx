@@ -2,11 +2,12 @@
 
 import { useState, useRef } from 'react'
 import toast from 'react-hot-toast'
+import { Search } from 'lucide-react'
 import { ChatDocumentUpload } from './ChatDocumentUpload'
 import { supabase } from '@/lib/supabase'
 
 interface MessageInputProps {
-  onSendMessage: (message: string, documentIds?: string[], documentNames?: string[]) => void
+  onSendMessage: (message: string, documentIds?: string[], documentNames?: string[], useWebSearch?: boolean) => void
   disabled?: boolean
   loading?: boolean
   conversationId?: string
@@ -20,6 +21,7 @@ export function MessageInput({
 }: MessageInputProps) {
   const [input, setInput] = useState('')
   const [isProcessingDocs, setIsProcessingDocs] = useState(false)
+  const [useWebSearch, setUseWebSearch] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const uploadRef = useRef<any>(null)
 
@@ -76,8 +78,13 @@ export function MessageInput({
         uploadRef.current?.clearPendingFiles()
       }
 
-      // Send message with document IDs and names
-      onSendMessage(input.trim(), documentIds.length > 0 ? documentIds : undefined, documentNames.length > 0 ? documentNames : undefined)
+      // Send message with document IDs, names, and web search flag
+      onSendMessage(
+        input.trim(),
+        documentIds.length > 0 ? documentIds : undefined,
+        documentNames.length > 0 ? documentNames : undefined,
+        useWebSearch
+      )
       setInput('')
 
       // Reset textarea height
@@ -143,6 +150,20 @@ export function MessageInput({
               disabled={disabled || loading || isProcessingDocs}
             />
           )}
+
+          <button
+            type="button"
+            onClick={() => setUseWebSearch(!useWebSearch)}
+            disabled={disabled || loading}
+            className="p-2 md:p-3 rounded-lg transition hover:bg-opacity-80 flex items-center justify-center min-h-10 disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              backgroundColor: useWebSearch ? '#e0521d' : '#333333',
+              color: useWebSearch ? 'white' : '#999999'
+            }}
+            title={useWebSearch ? 'Desativar busca na web' : 'Ativar busca na web'}
+          >
+            <Search size={20} />
+          </button>
 
           <button
             type="submit"

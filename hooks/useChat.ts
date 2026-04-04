@@ -163,7 +163,7 @@ export function useChat(conversationId: string) {
     }
   }, [conversationId])
 
-  const sendMessage = useCallback(async (content: string, documentIds?: string[], documentNames?: string[]) => {
+  const sendMessage = useCallback(async (content: string, documentIds?: string[], documentNames?: string[], useWebSearch?: boolean) => {
     if (!agent || !agent.id) {
       setError('Agente não está carregado. Tente recarregar a página.')
       return
@@ -235,6 +235,7 @@ export function useChat(conversationId: string) {
           message: content,
           isFirstMessage,
           documentIds,
+          useWebSearch: useWebSearch || false,
         }),
       })
 

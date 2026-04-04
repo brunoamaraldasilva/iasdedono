@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
 import { generateChatResponseStream, generateConversationTitle } from '@/lib/openai'
+import { searchGoogle, formatResultsForPrompt } from '@/lib/serpapi'
 import { rateLimit } from '@/lib/rateLimit'
 
 // Server-side admin client for updating conversations
@@ -79,7 +80,7 @@ async function generateTitleAsync(
 
 export async function POST(request: NextRequest) {
   try {
-    const { conversationId, agentId, message, isFirstMessage, documentIds } = await request.json()
+    const { conversationId, agentId, message, isFirstMessage, documentIds, useWebSearch } = await request.json()
 
     if (!conversationId || !agentId || !message) {
       console.error('Missing required fields:', { conversationId, agentId, message })
@@ -227,6 +228,38 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // Web search if enabled
+    let webSearchSources: { title: string; link: string }[] = []
+    if (useWebSearch) {
+      try {
+        console.log('🔍 [CHAT] Performing web search for:', message.substring(0, 100))
+        const searchResults = await searchGoogle(message, { num: 3 })
+
+        if (searchResults && searchResults.length > 0) {
+          console.log('✅ [CHAT] Found', searchResults.length, 'web results')
+
+          webSearchSources = searchResults.map(r => ({
+            title: r.title,
+            link: r.link
+          }))
+
+          const webSearchContext = searchResults
+            .map((r, i) => `${i + 1}. "${r.title}"\n${r.snippet}\n(Fonte: ${r.link})`)
+            .join('\n\n')
+
+          systemPrompt += `
+
+## Resultados de Busca na Web (recentes):
+${webSearchContext}
+
+Instrução: Use os resultados da web acima para complementar sua resposta com informações atualizadas, se relevante.`
+        }
+      } catch (searchError) {
+        console.error('❌ [CHAT] Web search error:', searchError)
+        // Graceful fallback - continue sem web search
+      }
+    }
+
     // Add document text if provided
     if (documentIds && documentIds.length > 0) {
       console.log('📎 [CHAT] Loading documents for:', documentIds)
@@ -299,6 +332,16 @@ ${doc.extracted_text}`
             fullResponse += chunk
             // Send chunk to client
             controller.enqueue(encoder.encode(chunk))
+          }
+
+          // Add web search sources to response if any
+          if (webSearchSources.length > 0) {
+            const sourcesMarker = '\n\n---\n**Fontes da Busca Web:**\n'
+            const sourcesText = webSearchSources.map(s => `- [${s.title}](${s.link})`).join('\n')
+            fullResponse += sourcesMarker + sourcesText
+
+            // Send sources to client
+            controller.enqueue(encoder.encode(sourcesMarker + sourcesText))
           }
 
           // Save assistant message to DB after streaming completes
