@@ -1,0 +1,923 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Web Search - IAs de Dono</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+      background-color: #161616;
+      color: #ffffff;
+      line-height: 1.6;
+      font-size: 16px;
+    }
+
+    header {
+      background: linear-gradient(135deg, #161616 0%, #222423 100%);
+      padding: 40px 16px;
+      text-align: center;
+      border-bottom: 2px solid #e0521d;
+    }
+
+    h1 {
+      font-size: 1.75rem;
+      margin-bottom: 8px;
+      color: #ffffff;
+    }
+
+    .subtitle {
+      font-size: 0.95rem;
+      color: #999999;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px 16px;
+    }
+
+    .intro {
+      background-color: #222423;
+      border-left: 4px solid #e0521d;
+      padding: 20px;
+      border-radius: 8px;
+      margin-bottom: 32px;
+    }
+
+    .intro h2 {
+      color: #e0521d;
+      margin-bottom: 12px;
+      font-size: 1.1rem;
+    }
+
+    .intro p {
+      color: #cccccc;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+
+    .intro ul {
+      margin-left: 16px;
+      margin-top: 8px;
+    }
+
+    .intro li {
+      margin-bottom: 6px;
+      font-size: 0.95rem;
+    }
+
+    .section-title {
+      font-size: 1.4rem;
+      color: #ffffff;
+      margin: 36px 0 20px 0;
+      text-align: center;
+    }
+
+    /* Cards de opções - Mobile First */
+    .options-grid {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .option-card {
+      background-color: #222423;
+      border: 2px solid #333333;
+      border-radius: 12px;
+      padding: 20px;
+      transition: all 0.3s ease;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .option-card:active {
+      border-color: #e0521d;
+      background-color: #2a2a2a;
+    }
+
+    .option-card.recommended {
+      border: 2px solid #e0521d;
+      background-color: #2a1f1a;
+    }
+
+    .option-card.recommended::before {
+      content: "⭐ RECOMENDADO";
+      display: inline-block;
+      background-color: #e0521d;
+      color: #161616;
+      padding: 6px 12px;
+      border-radius: 20px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+      width: fit-content;
+    }
+
+    .option-name {
+      font-size: 1.25rem;
+      color: #ffffff;
+      margin-bottom: 8px;
+      font-weight: 600;
+    }
+
+    .option-price {
+      color: #e0521d;
+      font-size: 1rem;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+
+    .option-limit {
+      background-color: #1a1a1a;
+      padding: 12px;
+      border-radius: 6px;
+      margin-bottom: 16px;
+      color: #cccccc;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    .pros, .cons {
+      margin-bottom: 16px;
+      flex-grow: 1;
+    }
+
+    .pros h4, .cons h4 {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+    }
+
+    .pros h4 {
+      color: #10b981;
+    }
+
+    .cons h4 {
+      color: #fca5a5;
+    }
+
+    .pros ul, .cons ul {
+      list-style: none;
+      padding-left: 0;
+    }
+
+    .pros li, .cons li {
+      color: #cccccc;
+      margin-bottom: 6px;
+      padding-left: 20px;
+      position: relative;
+      font-size: 0.9rem;
+    }
+
+    .pros li::before {
+      content: "✓";
+      position: absolute;
+      left: 0;
+      color: #10b981;
+      font-weight: bold;
+    }
+
+    .cons li::before {
+      content: "✗";
+      position: absolute;
+      left: 0;
+      color: #ef4444;
+      font-weight: bold;
+    }
+
+    /* Tabela comparativa em cards no mobile */
+    .comparison-table {
+      width: 100%;
+      border-collapse: collapse;
+      background-color: #222423;
+      border-radius: 8px;
+      overflow: hidden;
+      margin-bottom: 32px;
+      display: none;
+    }
+
+    .comparison-table th {
+      background-color: #1a1a1a;
+      color: #ffffff;
+      padding: 12px;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #e0521d;
+    }
+
+    .comparison-table td {
+      padding: 12px;
+      border-bottom: 1px solid #333333;
+      color: #cccccc;
+      font-size: 0.9rem;
+    }
+
+    .comparison-table tr:last-child td {
+      border-bottom: none;
+    }
+
+    /* Cards de comparação para mobile */
+    .comparison-cards {
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      margin-bottom: 32px;
+    }
+
+    .comparison-card {
+      background-color: #222423;
+      border: 1px solid #333333;
+      border-radius: 8px;
+      padding: 16px;
+    }
+
+    .comparison-card-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: start;
+      margin-bottom: 12px;
+      gap: 12px;
+    }
+
+    .comparison-card-row:last-child {
+      margin-bottom: 0;
+    }
+
+    .comparison-label {
+      color: #999999;
+      font-size: 0.85rem;
+      text-transform: uppercase;
+      flex: 0 0 35%;
+      font-weight: 600;
+    }
+
+    .comparison-value {
+      color: #ffffff;
+      font-size: 0.9rem;
+      text-align: right;
+    }
+
+    .badge {
+      display: inline-block;
+      padding: 4px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .badge-star {
+      background-color: #e0521d;
+      color: #161616;
+    }
+
+    .badge-good {
+      background-color: #10b981;
+      color: #161616;
+    }
+
+    .badge-fair {
+      background-color: #f59e0b;
+      color: #161616;
+    }
+
+    .badge-limited {
+      background-color: #ef4444;
+      color: #ffffff;
+    }
+
+    /* CTA Section */
+    .cta-section {
+      background-color: #222423;
+      border: 2px solid #e0521d;
+      border-radius: 12px;
+      padding: 24px;
+      text-align: center;
+      margin-bottom: 32px;
+    }
+
+    .cta-section h2 {
+      color: #e0521d;
+      margin-bottom: 16px;
+      font-size: 1.3rem;
+    }
+
+    .cta-section p {
+      color: #cccccc;
+      margin-bottom: 20px;
+      font-size: 0.95rem;
+    }
+
+    .button-group {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      justify-content: center;
+    }
+
+    .btn {
+      padding: 14px 20px;
+      border-radius: 8px;
+      font-size: 0.95rem;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-decoration: none;
+      display: block;
+      width: 100%;
+    }
+
+    .btn-primary {
+      background-color: #e0521d;
+      color: #161616;
+    }
+
+    .btn-primary:active {
+      background-color: #ff6b35;
+    }
+
+    .btn-secondary {
+      background-color: transparent;
+      color: #e0521d;
+      border: 2px solid #e0521d;
+    }
+
+    .btn-secondary:active {
+      background-color: #e0521d;
+      color: #161616;
+    }
+
+    footer {
+      text-align: center;
+      padding: 24px 16px;
+      color: #999999;
+      border-top: 1px solid #333333;
+      margin-top: 32px;
+      font-size: 0.85rem;
+    }
+
+    footer p {
+      margin-bottom: 8px;
+    }
+
+    .faq {
+      background-color: #222423;
+      border-radius: 8px;
+      padding: 20px;
+      margin-bottom: 32px;
+    }
+
+    .faq h3 {
+      color: #e0521d;
+      margin-bottom: 16px;
+      font-size: 1.1rem;
+    }
+
+    .faq-item {
+      margin-bottom: 16px;
+      padding-bottom: 16px;
+      border-bottom: 1px solid #333333;
+    }
+
+    .faq-item:last-child {
+      border-bottom: none;
+      margin-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .faq-question {
+      color: #ffffff;
+      font-weight: 600;
+      margin-bottom: 8px;
+      font-size: 0.95rem;
+    }
+
+    .faq-answer {
+      color: #cccccc;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+
+    /* TABLET - 640px+ */
+    @media (min-width: 640px) {
+      header {
+        padding: 50px 24px;
+      }
+
+      h1 {
+        font-size: 2rem;
+      }
+
+      .container {
+        padding: 32px 24px;
+      }
+
+      .section-title {
+        font-size: 1.6rem;
+        margin: 40px 0 24px 0;
+      }
+
+      .options-grid {
+        gap: 20px;
+      }
+
+      .option-card {
+        padding: 24px;
+      }
+
+      .button-group {
+        flex-direction: row;
+        flex-wrap: wrap;
+        gap: 12px;
+      }
+
+      .btn {
+        width: auto;
+        flex: 1;
+        min-width: 150px;
+      }
+    }
+
+    /* DESKTOP - 768px+ */
+    @media (min-width: 768px) {
+      header {
+        padding: 60px 24px;
+      }
+
+      h1 {
+        font-size: 2.5rem;
+      }
+
+      .container {
+        padding: 40px 24px;
+      }
+
+      .intro {
+        padding: 30px;
+        margin-bottom: 50px;
+      }
+
+      .intro h2 {
+        font-size: 1.3rem;
+        margin-bottom: 15px;
+      }
+
+      .section-title {
+        font-size: 2rem;
+        margin: 50px 0 30px 0;
+      }
+
+      .options-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+        gap: 24px;
+      }
+
+      .option-card {
+        padding: 30px;
+      }
+
+      .option-card:hover {
+        border-color: #e0521d;
+        transform: translateY(-5px);
+        box-shadow: 0 10px 30px rgba(224, 82, 29, 0.2);
+      }
+
+      .comparison-cards {
+        display: none;
+      }
+
+      .comparison-table {
+        display: table;
+      }
+
+      .button-group {
+        flex-direction: row;
+        gap: 15px;
+      }
+
+      .btn {
+        width: auto;
+      }
+
+      .faq {
+        padding: 30px;
+        margin-bottom: 50px;
+      }
+
+      .cta-section {
+        padding: 40px;
+        margin-bottom: 50px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🔍 Web Search</h1>
+    <p class="subtitle">Opções de API para IAs de Dono</p>
+  </header>
+
+  <div class="container">
+    <!-- Introdução -->
+    <div class="intro">
+      <h2>O que é Web Search?</h2>
+      <p>
+        <strong>Web Search</strong> permite que as IAs de Dono busquem informações atualizadas na internet em tempo real.
+      </p>
+      <p>
+        Em vez de responder apenas com conhecimento treinado, as IAs podem:
+      </p>
+      <ul style="margin-left: 20px; margin-top: 10px;">
+        <li>✓ Encontrar notícias e tendências atuais</li>
+        <li>✓ Validar dados com informações de 2024/2025</li>
+        <li>✓ Fornecer análises mais relevantes e atualizadas</li>
+      </ul>
+    </div>
+
+    <!-- Opções -->
+    <h2 class="section-title">Opções de Provedores</h2>
+
+    <div class="options-grid">
+      <!-- Serper.dev (Recomendado) -->
+      <div class="option-card recommended">
+        <div class="option-name">Serper.dev</div>
+        <div class="option-price">FREE (500 req/mês) → $10/mês</div>
+        <div class="option-limit">
+          📊 Limite: 500 buscas/mês (grátis)<br>
+          Depois: $10/mês (5.000 buscas)
+        </div>
+        <div class="pros">
+          <h4>✓ Vantagens</h4>
+          <ul>
+            <li>Interface super simples</li>
+            <li>Resultados de excelente qualidade</li>
+            <li>Suporte rápido e responsivo</li>
+            <li>Ótimo custo para escala</li>
+            <li>500 buscas grátis é razoável para MVP</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>✗ Desvantagens</h4>
+          <ul>
+            <li>Precisa cartão de crédito (mesmo para grátis)</li>
+            <li>Após 500 buscas, precisa fazer upgrade</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Bing Search API -->
+      <div class="option-card">
+        <div class="option-name">Bing Search API</div>
+        <div class="option-price">FREE (1.000 req/mês) → $7-20/mês</div>
+        <div class="option-limit">
+          📊 Limite: 1.000 buscas/mês (grátis)<br>
+          Depois: Escala com preço baixo
+        </div>
+        <div class="pros">
+          <h4>✓ Vantagens</h4>
+          <ul>
+            <li>1.000 buscas grátis por mês</li>
+            <li>Suporte oficial da Microsoft</li>
+            <li>Resultados de qualidade</li>
+            <li>Escalável com preço justo</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>✗ Desvantagens</h4>
+          <ul>
+            <li>Interface mais complexa</li>
+            <li>Requer conta Azure</li>
+            <li>Setup mais demorado</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- DuckDuckGo -->
+      <div class="option-card">
+        <div class="option-name">DuckDuckGo</div>
+        <div class="option-price">Completamente GRATUITO</div>
+        <div class="option-limit">
+          📊 Limite: Sem limite<br>
+          Funcionamento: Via web scraping
+        </div>
+        <div class="pros">
+          <h4>✓ Vantagens</h4>
+          <ul>
+            <li>100% gratuito, sem cartão necessário</li>
+            <li>Sem limite de buscas</li>
+            <li>Enfoque em privacidade</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>✗ Desvantagens</h4>
+          <ul>
+            <li>Sem API oficial (web scraping instável)</li>
+            <li>Mais lento que alternativas</li>
+            <li>Pode quebrar com atualizações</li>
+            <li>Rate limiting mais agressivo</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- SerpAPI -->
+      <div class="option-card">
+        <div class="option-name">SerpAPI</div>
+        <div class="option-price">PAGO ($20/mês) - FREE (100 req/mês)</div>
+        <div class="option-limit">
+          📊 Limite: 100 buscas/mês (grátis)<br>
+          Depois: $20/mês (5.000 buscas)
+        </div>
+        <div class="pros">
+          <h4>✓ Vantagens</h4>
+          <ul>
+            <li>Resultados premium</li>
+            <li>Suporte para múltiplos buscadores</li>
+            <li>Interface intuitiva</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>✗ Desvantagens</h4>
+          <ul>
+            <li>100 buscas grátis é insuficiente</li>
+            <li>Caro para MVP ($20/mês)</li>
+            <li>Melhor para produção já escalada</li>
+          </ul>
+        </div>
+      </div>
+
+      <!-- Google Custom Search -->
+      <div class="option-card">
+        <div class="option-name">Google Custom Search</div>
+        <div class="option-price">FREE (100 req/dia) → $0.08/query</div>
+        <div class="option-limit">
+          📊 Limite: 100 buscas/dia (grátis)<br>
+          Depois: $0.08 por busca
+        </div>
+        <div class="pros">
+          <h4>✓ Vantagens</h4>
+          <ul>
+            <li>Resultados Google (melhor qualidade)</li>
+            <li>100 buscas diárias grátis</li>
+          </ul>
+        </div>
+        <div class="cons">
+          <h4>✗ Desvantagens</h4>
+          <ul>
+            <li>MAX 100/dia = insuficiente para produção</li>
+            <li>Muito caro após limite ($2.40/dia)</li>
+            <li>Impraticável para escala</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabela Comparativa -->
+    <h2 class="section-title">Comparativo Rápido</h2>
+
+    <!-- Cards de Comparação (Mobile) -->
+    <div class="comparison-cards">
+      <div class="comparison-card">
+        <div style="font-weight: 600; margin-bottom: 12px; color: #e0521d;">Serper.dev</div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Custo</div>
+          <div class="comparison-value">FREE → $10/mês</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Limite</div>
+          <div class="comparison-value">500 req/mês</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Qualidade</div>
+          <div class="comparison-value"><span class="badge badge-good">Excelente</span></div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Recomendado</div>
+          <div class="comparison-value"><span class="badge badge-star">⭐ MVP</span></div>
+        </div>
+      </div>
+
+      <div class="comparison-card">
+        <div style="font-weight: 600; margin-bottom: 12px; color: #e0521d;">Bing Search</div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Custo</div>
+          <div class="comparison-value">FREE → $7-20/mês</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Limite</div>
+          <div class="comparison-value">1.000 req/mês</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Qualidade</div>
+          <div class="comparison-value"><span class="badge badge-good">Boa</span></div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Recomendado</div>
+          <div class="comparison-value"><span class="badge badge-good">Alternativa</span></div>
+        </div>
+      </div>
+
+      <div class="comparison-card">
+        <div style="font-weight: 600; margin-bottom: 12px; color: #e0521d;">DuckDuckGo</div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Custo</div>
+          <div class="comparison-value">Gratuito</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Limite</div>
+          <div class="comparison-value">Ilimitado</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Qualidade</div>
+          <div class="comparison-value"><span class="badge badge-fair">Regular</span></div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Recomendado</div>
+          <div class="comparison-value"><span class="badge badge-limited">Último</span></div>
+        </div>
+      </div>
+
+      <div class="comparison-card">
+        <div style="font-weight: 600; margin-bottom: 12px; color: #e0521d;">SerpAPI</div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Custo</div>
+          <div class="comparison-value">$20/mês</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Limite</div>
+          <div class="comparison-value">100 req/mês (free)</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Qualidade</div>
+          <div class="comparison-value"><span class="badge badge-good">Excelente</span></div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Recomendado</div>
+          <div class="comparison-value"><span class="badge badge-fair">Produção</span></div>
+        </div>
+      </div>
+
+      <div class="comparison-card">
+        <div style="font-weight: 600; margin-bottom: 12px; color: #e0521d;">Google Custom</div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Custo</div>
+          <div class="comparison-value">$0.08/query</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Limite</div>
+          <div class="comparison-value">100 req/dia</div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Qualidade</div>
+          <div class="comparison-value"><span class="badge badge-good">Melhor</span></div>
+        </div>
+        <div class="comparison-card-row">
+          <div class="comparison-label">Recomendado</div>
+          <div class="comparison-value"><span class="badge badge-limited">Não</span></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tabela Comparativa (Desktop) -->
+    <table class="comparison-table">
+      <thead>
+        <tr>
+          <th>Provedor</th>
+          <th>Custo</th>
+          <th>Limite Grátis</th>
+          <th>Qualidade</th>
+          <th>Recomendação</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Serper.dev</strong></td>
+          <td>FREE → $10/mês</td>
+          <td>500 req/mês</td>
+          <td><span class="badge badge-good">Excelente</span></td>
+          <td><span class="badge badge-star">⭐ MVP</span></td>
+        </tr>
+        <tr>
+          <td><strong>Bing Search</strong></td>
+          <td>FREE → $7-20/mês</td>
+          <td>1.000 req/mês</td>
+          <td><span class="badge badge-good">Boa</span></td>
+          <td><span class="badge badge-good">Alternativa</span></td>
+        </tr>
+        <tr>
+          <td><strong>DuckDuckGo</strong></td>
+          <td>Gratuito</td>
+          <td>Ilimitado</td>
+          <td><span class="badge badge-fair">Regular</span></td>
+          <td><span class="badge badge-limited">Último recurso</span></td>
+        </tr>
+        <tr>
+          <td><strong>SerpAPI</strong></td>
+          <td>$20/mês</td>
+          <td>100 req/mês</td>
+          <td><span class="badge badge-good">Excelente</span></td>
+          <td><span class="badge badge-fair">Produção escalada</span></td>
+        </tr>
+        <tr>
+          <td><strong>Google Custom</strong></td>
+          <td>$0.08/query</td>
+          <td>100 req/dia</td>
+          <td><span class="badge badge-good">Melhor</span></td>
+          <td><span class="badge badge-limited">Não viável</span></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <!-- FAQ -->
+    <div class="faq">
+      <h3>❓ Perguntas Frequentes</h3>
+
+      <div class="faq-item">
+        <div class="faq-question">Qual devo escolher?</div>
+        <div class="faq-answer">
+          <strong>Para MVP:</strong> Serper.dev (gratuito até 500 req/mês)<br>
+          <strong>Para máxima economia:</strong> Bing Search API (1.000 req/mês grátis)<br>
+          <strong>Para total liberdade:</strong> DuckDuckGo (mas qualidade menor)
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question">E se eu passar do limite grátis?</div>
+        <div class="faq-answer">
+          <strong>Serper.dev:</strong> Sobe para $10/mês (5.000 req) - melhor custo<br>
+          <strong>Bing:</strong> Escala gradualmente com preço baixo<br>
+          <strong>SerpAPI:</strong> $20/mês - mais caro
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question">Qual tem melhor qualidade de resultados?</div>
+        <div class="faq-answer">
+          Google Custom Search (mas muito caro), seguido por Serper.dev e SerpAPI.
+        </div>
+      </div>
+
+      <div class="faq-item">
+        <div class="faq-question">Como vai funcionar nas IAs?</div>
+        <div class="faq-answer">
+          Cada IA terá um <strong>toggle "Buscar na Web"</strong>. Quando ativo, faz a busca e injeta os resultados na resposta.
+        </div>
+      </div>
+    </div>
+
+    <!-- CTA -->
+    <div class="cta-section">
+      <h2>Qual você prefere?</h2>
+      <p>
+        Escolha a opção que melhor se encaixa na estratégia do Manual de Donos.
+      </p>
+      <div class="button-group">
+        <button class="btn btn-primary" onclick="selectOption('serper')">
+          Ir com Serper.dev ⭐
+        </button>
+        <button class="btn btn-secondary" onclick="selectOption('bing')">
+          Considerar Bing
+        </button>
+        <button class="btn btn-secondary" onclick="selectOption('free')">
+          Quero 100% Free
+        </button>
+      </div>
+    </div>
+
+  </div>
+
+  <footer>
+    <p>IAs de Dono — Evolução Contínua 🚀</p>
+    <p style="margin-top: 10px; font-size: 0.9rem;">
+      Document criado em 04/04/2026 | Decisão necessária para implementação
+    </p>
+  </footer>
+
+  <script>
+    function selectOption(option) {
+      let message = '';
+      switch(option) {
+        case 'serper':
+          message = 'Você escolheu: Serper.dev ⭐\n\nPróximos passos:\n1. Criar conta em serper.dev\n2. Copiar API Key\n3. Validar com o time\n\nVamos implementar! 🚀';
+          break;
+        case 'bing':
+          message = 'Você escolheu: Bing Search API\n\nPróximos passos:\n1. Criar conta Azure\n2. Configurar Bing Search v7\n3. Validar com o time\n\nVamos implementar!';
+          break;
+        case 'free':
+          message = 'Você escolheu: DuckDuckGo (100% Free)\n\nAviso:\n- Qualidade menor que Serper/Bing\n- Setup mais complexo\n- Menos confiável\n\nTem certeza? 🤔';
+          break;
+      }
+      alert(message);
+    }
+  </script>
+</body>
+</html>
