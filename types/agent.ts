@@ -21,6 +21,12 @@ export interface AgentMaterial {
   order: number
   created_at: string
   updated_at: string
+  // File upload support
+  file_path?: string
+  file_type?: string
+  is_file_based?: boolean
+  file_size?: number
+  extraction_status?: 'pending' | 'extracting' | 'completed' | 'error'
 }
 
 export interface AgentBetaLink {

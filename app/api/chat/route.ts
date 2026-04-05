@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { generateChatResponseStream, generateConversationTitle } from '@/lib/openai'
+import { generateChatResponseWithTools, generateConversationTitle } from '@/lib/openai'
 import { searchGoogle, formatResultsForPrompt } from '@/lib/serpapi'
+import { scrapeUrl, isValidUrl, extractUrls } from '@/lib/webscraper'
 import { rateLimit } from '@/lib/rateLimit'
 
 // Server-side admin client for updating conversations
@@ -80,7 +81,7 @@ async function generateTitleAsync(
 
 export async function POST(request: NextRequest) {
   try {
-    const { conversationId, agentId, message, isFirstMessage, documentIds, useWebSearch } = await request.json()
+    const { conversationId, agentId, message, isFirstMessage, documentIds } = await request.json()
 
     if (!conversationId || !agentId || !message) {
       console.error('Missing required fields:', { conversationId, agentId, message })
@@ -116,24 +117,22 @@ export async function POST(request: NextRequest) {
     // Get authenticated user from token
     const { data: { user }, error: authError } = await supabase.auth.getUser()
 
-    if (authError || !user?.id) {
-      console.error('Auth error:', authError?.message || 'No user')
-      return NextResponse.json(
-        { error: 'Unauthorized' },
-        { status: 401 }
-      )
-    }
+    // For beta mode (no auth), use a placeholder user
+    const userId = user?.id || 'beta-user'
+    const isBeta = !user?.id
 
     // Create admin Supabase client for background title updates
     const adminSupabase = createAdminSupabaseClient()
 
-    // Rate limit: 30 requests per minute per user
-    const rateLimitCheck = rateLimit(`chat:${user.id}`, 30, 60000)
-    if (!rateLimitCheck.success) {
-      return NextResponse.json(
-        { error: 'Too many requests. Please try again in a moment.' },
-        { status: 429 }
-      )
+    // Rate limit: 30 requests per minute per user (skip for beta)
+    if (!isBeta) {
+      const rateLimitCheck = rateLimit(`chat:${userId}`, 30, 60000)
+      if (!rateLimitCheck.success) {
+        return NextResponse.json(
+          { error: 'Too many requests. Please try again in a moment.' },
+          { status: 429 }
+        )
+      }
     }
 
     // Get agent details
@@ -158,42 +157,55 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Get conversation and verify ownership
-    const { data: conversation, error: convError } = await supabase
-      .from('conversations')
-      .select('*')
-      .eq('id', conversationId)
-      .single()
+    // Get conversation and verify ownership (skip for beta)
+    let conversation = null
+    if (!isBeta) {
+      const { data: convData, error: convError } = await supabase
+        .from('conversations')
+        .select('*')
+        .eq('id', conversationId)
+        .single()
 
-    if (convError || !conversation) {
-      return NextResponse.json(
-        { error: 'Conversation not found' },
-        { status: 404 }
-      )
+      if (convError || !convData) {
+        return NextResponse.json(
+          { error: 'Conversation not found' },
+          { status: 404 }
+        )
+      }
+
+      // Verify user owns this conversation
+      if (convData.user_id !== userId) {
+        return NextResponse.json(
+          { error: 'Forbidden' },
+          { status: 403 }
+        )
+      }
+
+      conversation = convData
     }
 
-    // CRITICAL: Verify user owns this conversation
-    if (conversation.user_id !== user.id) {
-      return NextResponse.json(
-        { error: 'Forbidden' },
-        { status: 403 }
-      )
+    // Get business context (skip for beta)
+    let context = null
+    if (!isBeta && conversation) {
+      const { data: contextData } = await supabase
+        .from('business_context')
+        .select('*')
+        .eq('user_id', conversation.user_id)
+        .single()
+      context = contextData
     }
 
-    // Get business context
-    const { data: context } = await supabase
-      .from('business_context')
-      .select('*')
-      .eq('user_id', conversation.user_id)
-      .single()
-
-    // Get recent messages (last 15)
-    const { data: messagesData } = await supabase
-      .from('messages')
-      .select('*')
-      .eq('conversation_id', conversationId)
-      .order('created_at', { ascending: false })
-      .limit(15)
+    // Get recent messages (skip for beta)
+    let messagesData = []
+    if (!isBeta) {
+      const { data: msgs } = await supabase
+        .from('messages')
+        .select('*')
+        .eq('conversation_id', conversationId)
+        .order('created_at', { ascending: false })
+        .limit(15)
+      messagesData = msgs || []
+    }
 
     // Reverse to get ascending order for context building
     const messages = messagesData ? messagesData.reverse() : []
@@ -211,53 +223,97 @@ export async function POST(request: NextRequest) {
 - Objetivos: ${context.goals || 'Não fornecido'}`
     }
 
-    // Get agent materials (contexto adicional)
-    const { data: materials } = await supabase
+    // Get agent materials via admin client (bypasses RLS)
+    const { data: materials } = await adminSupabase
       .from('agent_materials')
       .select('*')
       .eq('agent_id', agentId)
       .order('order', { ascending: true })
 
     if (materials && materials.length > 0) {
+      console.log('[CHAT] Loading agent materials:', materials.length)
       systemPrompt += `
 
 ## Materiais e Contextos Disponíveis:`
       materials.forEach((material) => {
-        systemPrompt += `
-- ${material.title}: ${material.content.substring(0, 200)}...`
-      })
-    }
-
-    // Web search if enabled
-    let webSearchSources: { title: string; link: string }[] = []
-    if (useWebSearch) {
-      try {
-        console.log('🔍 [CHAT] Performing web search for:', message.substring(0, 100))
-        const searchResults = await searchGoogle(message, { num: 3 })
-
-        if (searchResults && searchResults.length > 0) {
-          console.log('✅ [CHAT] Found', searchResults.length, 'web results')
-
-          webSearchSources = searchResults.map(r => ({
-            title: r.title,
-            link: r.link
-          }))
-
-          const webSearchContext = searchResults
-            .map((r, i) => `${i + 1}. "${r.title}"\n${r.snippet}\n(Fonte: ${r.link})`)
-            .join('\n\n')
-
+        if (material.is_file_based) {
+          // File-based materials: use full content (already limited to 10000 chars)
           systemPrompt += `
 
-## Resultados de Busca na Web (recentes):
-${webSearchContext}
-
-Instrução: Use os resultados da web acima para complementar sua resposta com informações atualizadas, se relevante.`
+### ${material.title} (${material.file_type?.toUpperCase() || 'Documento'})
+${material.content}`
+          console.log('[CHAT] Added file material:', material.title + ' (' + material.file_size + ' bytes)')
+        } else {
+          // Text materials: use preview
+          systemPrompt += `
+- ${material.title}: ${material.content.substring(0, 300)}...`
+          console.log('[CHAT] Added text material:', material.title)
         }
-      } catch (searchError) {
-        console.error('❌ [CHAT] Web search error:', searchError)
-        // Graceful fallback - continue sem web search
+      })
+      console.log('[CHAT] Agent materials injected into prompt')
+    }
+
+    // Tool callback for web search
+    const webSearchSources: Array<{ title: string; link: string }> = []
+
+    const handleToolCall = async (toolName: string, toolInput: Record<string, unknown>): Promise<string> => {
+      if (toolName === 'web_search') {
+        try {
+          const query = toolInput.query as string
+          if (!query) {
+            return 'Error: No search query provided'
+          }
+
+          console.log('🔍 [CHAT] Agent calling web_search for:', query.substring(0, 100))
+          const searchResults = await searchGoogle(query, { num: 5 })
+
+          if (searchResults && searchResults.length > 0) {
+            console.log('✅ [CHAT] Found', searchResults.length, 'web results')
+
+            // Store sources for later display
+            searchResults.forEach(r => {
+              if (!webSearchSources.find(s => s.link === r.link)) {
+                webSearchSources.push({ title: r.title, link: r.link })
+              }
+            })
+
+            // Format with STRICT instructions to preserve URLs
+            const formattedResults = searchResults
+              .map((r, i) => `${i + 1}. **[${r.title}](${r.link})**\n   Link: ${r.link}\n   Resumo: ${r.snippet}`)
+              .join('\n\n')
+
+            return `Web search results for "${query}"\n\nIMPORTANT: Cite EXACTLY as shown below with markdown links and full URLs:\n\n${formattedResults}\n\nMUSTHAVE: You MUST include these sources at the end in format:\n---\n**Fontes Utilizadas:**\n${searchResults.map(r => `- [${r.title}](${r.link})`).join('\n')}`
+          } else {
+            return `No search results found for "${query}". Please provide your response based on your knowledge.`
+          }
+        } catch (searchError) {
+          console.error('❌ [CHAT] Web search error:', searchError)
+          // Graceful fallback - agent can still respond
+          return `Web search temporarily unavailable: ${searchError instanceof Error ? searchError.message : 'Unknown error'}. Please respond based on your knowledge.`
+        }
+      } else if (toolName === 'web_scrape') {
+        try {
+          const url = toolInput.url as string
+          const selector = toolInput.selector as string | undefined
+
+          if (!url || !isValidUrl(url)) {
+            return 'Error: Invalid URL. Must be a valid HTTP(S) URL.'
+          }
+
+          console.log('🌐 [CHAT] Agent calling web_scrape for:', url)
+          const scrapedContent = await scrapeUrl(url, selector)
+
+          console.log('✅ [CHAT] Successfully scraped:', url)
+
+          // Retornar conteúdo para agent usar
+          return `Scraped content from: ${scrapedContent.title || url}\n\n${scrapedContent.content}\n\nSource: ${url}\nScraped: ${scrapedContent.scrapedAt}`
+        } catch (scrapeError) {
+          console.error('❌ [CHAT] Web scrape error:', scrapeError)
+          // Graceful fallback
+          return `Web scrape failed: ${scrapeError instanceof Error ? scrapeError.message : 'Unknown error'}. Please provide your response based on available information.`
+        }
       }
+      return 'Unknown tool'
     }
 
     // Add document text if provided
@@ -327,42 +383,35 @@ ${doc.extracted_text}`
     const stream = new ReadableStream({
       async start(controller) {
         try {
-          // Generate streamed response
-          for await (const chunk of generateChatResponseStream(systemPrompt, chatMessages)) {
+          // Generate streamed response with tools
+          console.log('🎯 [CHAT] Starting chat with Tool Calling support...')
+          for await (const chunk of generateChatResponseWithTools(systemPrompt, chatMessages, handleToolCall)) {
             fullResponse += chunk
             // Send chunk to client
             controller.enqueue(encoder.encode(chunk))
           }
 
-          // Add web search sources to response if any
-          if (webSearchSources.length > 0) {
-            const sourcesMarker = '\n\n---\n**Fontes da Busca Web:**\n'
-            const sourcesText = webSearchSources.map(s => `- [${s.title}](${s.link})`).join('\n')
-            fullResponse += sourcesMarker + sourcesText
+          // Save assistant message to DB after streaming completes (skip for beta)
+          if (!isBeta) {
+            const { error: insertAssistantError } = await supabase
+              .from('messages')
+              .insert([
+                {
+                  conversation_id: conversationId,
+                  role: 'assistant',
+                  content: fullResponse,
+                },
+              ])
 
-            // Send sources to client
-            controller.enqueue(encoder.encode(sourcesMarker + sourcesText))
-          }
-
-          // Save assistant message to DB after streaming completes
-          const { error: insertAssistantError } = await supabase
-            .from('messages')
-            .insert([
-              {
-                conversation_id: conversationId,
-                role: 'assistant',
-                content: fullResponse,
-              },
-            ])
-
-          if (insertAssistantError) {
-            console.error('Failed to save assistant message')
+            if (insertAssistantError) {
+              console.error('Failed to save assistant message')
+            }
           }
 
           controller.close()
 
-          // Generate title on first message - AFTER response closes, in background
-          if (isFirstMessage) {
+          // Generate title on first message - AFTER response closes, in background (skip for beta)
+          if (!isBeta && isFirstMessage) {
             console.log('✅ Stream closed, now starting title generation in background...')
             // Queue the title generation to run asynchronously without blocking
             setImmediate(() => {

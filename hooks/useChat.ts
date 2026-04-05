@@ -235,7 +235,6 @@ export function useChat(conversationId: string) {
           message: content,
           isFirstMessage,
           documentIds,
-          useWebSearch: useWebSearch || false,
         }),
       })
 

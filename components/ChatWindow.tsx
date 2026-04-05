@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import ReactMarkdown from 'react-markdown'
-import { SearchStatus } from './SearchStatus'
+import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '@/types/chat'
 
 interface ChatWindowProps {
@@ -12,6 +12,11 @@ interface ChatWindowProps {
   agentName?: string
 }
 
+interface SourceData {
+  title: string
+  link: string
+}
+
 export function ChatWindow({
   messages,
   loading,
@@ -19,42 +24,53 @@ export function ChatWindow({
   agentName = 'Assistant',
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const [webSources, setWebSources] = useState<{ title: string; link: string }[]>([])
+  const [messageSources, setMessageSources] = useState<Map<number, SourceData[]>>(new Map())
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }
 
-  // Extract web sources from last assistant message
+  // Extract sources from messages that have "Fontes Utilizadas:" section
   useEffect(() => {
-    const lastMessage = messages[messages.length - 1]
-    if (lastMessage?.role === 'assistant') {
-      const content = lastMessage.content
-      const sourcesMatch = content.match(/---\n\*\*Fontes da Busca Web:\*\*\n([\s\S]*?)$/)
+    const sources = new Map<number, SourceData[]>()
 
-      if (sourcesMatch) {
-        const sourcesText = sourcesMatch[1]
-        const sources = sourcesText
-          .split('\n')
-          .filter(line => line.startsWith('- ['))
-          .map(line => {
-            const titleMatch = line.match(/\[([^\]]+)\]/)
-            const linkMatch = line.match(/\(([^)]+)\)/)
-            return {
-              title: titleMatch?.[1] || '',
-              link: linkMatch?.[1] || ''
-            }
-          })
-        setWebSources(sources)
-      } else {
-        setWebSources([])
+    messages.forEach((msg, index) => {
+      if (msg.role === 'assistant') {
+        // Match the "Fontes Utilizadas:" section
+        const sourcesMatch = msg.content.match(/---\n\*\*Fontes Utilizadas:\*\*\n([\s\S]*?)$/)
+
+        if (sourcesMatch) {
+          const sourcesText = sourcesMatch[1]
+          const sourceLines = sourcesText.split('\n').filter(line => line.trim().startsWith('- '))
+
+          const extractedSources: SourceData[] = sourceLines
+            .map(line => {
+              // Match format: "- [Title] (URL)" or "- Title (URL)"
+              const titleMatch = line.match(/- (\[?[^\(\]]*\]?)\s*\(([^)]+)\)/)
+              if (titleMatch) {
+                let title = titleMatch[1]
+                // Remove brackets if present
+                if (title.startsWith('[') && title.endsWith(']')) {
+                  title = title.slice(1, -1)
+                }
+                return { title, link: titleMatch[2] }
+              }
+              return null
+            })
+            .filter((s): s is SourceData => s !== null)
+
+          if (extractedSources.length > 0) {
+            sources.set(index, extractedSources)
+          }
+        }
       }
-    }
+    })
+
+    setMessageSources(sources)
   }, [messages])
 
-  // Helper function to remove sources section from message content for display
-  const getMessageContentWithoutSources = (content: string) => {
-    return content.replace(/---\n\*\*Fontes da Busca Web:\*\*\n[\s\S]*?$/, '').trim()
+  const getMessageContentWithoutSources = (content: string): string => {
+    return content.replace(/---\n\*\*Fontes Utilizadas:\*\*\n[\s\S]*?$/, '').trim()
   }
 
   useEffect(() => {
@@ -71,10 +87,6 @@ export function ChatWindow({
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto px-3 md:px-6 py-4 md:py-6 space-y-3 md:space-y-4">
-        {/* Web Search Status */}
-        {(loading && webSources.length === 0) || webSources.length > 0 ? (
-          <SearchStatus isSearching={loading && webSources.length === 0} sources={webSources} />
-        ) : null}
 
         {isLoadingMessages ? (
           <div className="flex items-center justify-center h-full">
@@ -112,10 +124,12 @@ export function ChatWindow({
                   style={{ backgroundColor: msg.role === 'assistant' ? '#161616' : undefined }}
                 >
                   {msg.role === 'assistant' ? (
-                    <div className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none">
-                      <ReactMarkdown
-                        children={getMessageContentWithoutSources(msg.content)}
-                        components={{
+                    <div>
+                      <div className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none">
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          children={getMessageContentWithoutSources(msg.content)}
+                          components={{
                           p: ({ node, ...props }) => (
                             <p className="mb-2 last:mb-0" {...props} />
                           ),
@@ -149,8 +163,46 @@ export function ChatWindow({
                           h3: ({ node, ...props }) => (
                             <h3 className="text-sm font-bold mb-1" {...props} />
                           ),
+                          table: ({ node, ...props }) => (
+                            <table className="w-full border-collapse border border-gray-600 my-2 text-xs" {...props} />
+                          ),
+                          thead: ({ node, ...props }) => (
+                            <thead className="bg-gray-700" {...props} />
+                          ),
+                          tbody: ({ node, ...props }) => (
+                            <tbody {...props} />
+                          ),
+                          tr: ({ node, ...props }) => (
+                            <tr className="border border-gray-600" {...props} />
+                          ),
+                          th: ({ node, ...props }) => (
+                            <th className="border border-gray-600 px-2 py-1 text-left font-bold bg-gray-700" {...props} />
+                          ),
+                          td: ({ node, ...props }) => (
+                            <td className="border border-gray-600 px-2 py-1" {...props} />
+                          ),
                         }}
                       />
+                      </div>
+                      {/* Display sources if present */}
+                      {messageSources.has(index) && messageSources.get(index)!.length > 0 && (
+                        <div className="mt-3 pt-3 border-t border-gray-600 space-y-2">
+                          <p className="text-xs font-semibold text-gray-400">🔗 Fontes Utilizadas:</p>
+                          {messageSources.get(index)!.map((source, sIdx) => (
+                            <a
+                              key={sIdx}
+                              href={source.link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-[#e0521d] hover:underline break-all flex items-center gap-1"
+                              title={source.title}
+                            >
+                              <span>→</span>
+                              <span>{source.title || source.link}</span>
+                            </a>
+                          ))}
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <p className="text-sm break-words">{msg.content}</p>
@@ -184,11 +236,11 @@ export function ChatWindow({
             ))}
             {loading && (
               <div className="flex justify-start">
-                <div className="bg-gray-800 text-gray-100 px-4 py-2 rounded-lg rounded-bl-none">
+                <div className="text-gray-100 px-4 py-2 rounded-lg rounded-bl-none" style={{ backgroundColor: '#161616' }}>
                   <div className="flex space-x-2">
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce" />
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce delay-100" />
-                    <div className="w-2 h-2 bg-gray-500 rounded-full animate-bounce delay-200" />
+                    <div className="w-2 h-2 rounded-full animate-bounce" style={{ backgroundColor: '#333333' }} />
+                    <div className="w-2 h-2 rounded-full animate-bounce delay-100" style={{ backgroundColor: '#333333' }} />
+                    <div className="w-2 h-2 rounded-full animate-bounce delay-200" style={{ backgroundColor: '#333333' }} />
                   </div>
                 </div>
               </div>

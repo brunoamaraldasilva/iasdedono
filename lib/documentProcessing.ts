@@ -180,3 +180,35 @@ export async function extractTextFromDOCX(buffer: Buffer): Promise<string> {
   }
 }
 
+/**
+ * Extract text from any supported file type
+ * Detects format from mime type and delegates to appropriate extractor
+ */
+export async function extractTextFromFile(file: File): Promise<string> {
+  const buffer = Buffer.from(await file.arrayBuffer())
+  const mimeType = file.type.toLowerCase()
+  const fileName = file.name.toLowerCase()
+
+  if (mimeType === 'application/pdf' || fileName.endsWith('.pdf')) {
+    return extractTextFromPDF(buffer)
+  } else if (mimeType === 'text/csv' || fileName.endsWith('.csv')) {
+    return extractTextFromCSV(buffer)
+  } else if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' ||
+    mimeType === 'application/vnd.ms-excel' ||
+    fileName.endsWith('.xlsx') ||
+    fileName.endsWith('.xls')
+  ) {
+    return extractTextFromXLSX(buffer)
+  } else if (
+    mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    mimeType === 'application/msword' ||
+    fileName.endsWith('.docx') ||
+    fileName.endsWith('.doc')
+  ) {
+    return extractTextFromDOCX(buffer)
+  } else {
+    throw new Error(`Unsupported file type: ${mimeType} (${fileName})`)
+  }
+}
+

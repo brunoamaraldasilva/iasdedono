@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { createClient } from '@supabase/supabase-js'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { randomUUID } from 'crypto'
 
@@ -8,10 +9,22 @@ export async function POST(
 ) {
   try {
     const { id } = await params
-    const supabase = createServerSupabaseClient()
 
-    // Verify user is authenticated and is admin
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    // Get auth token from header
+    const authHeader = request.headers.get('Authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const token = authHeader.substring(7)
+
+    // Verify user via Supabase auth
+    const userSupabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+    )
+
+    const { data: { user }, error: authError } = await userSupabase.auth.getUser(token)
 
     if (authError || !user?.id) {
       return NextResponse.json(
@@ -19,6 +32,9 @@ export async function POST(
         { status: 401 }
       )
     }
+
+    // Use admin Supabase for DB operations
+    const supabase = createServerSupabaseClient()
 
     // Check user role is admin
     const { data: userData } = await supabase
@@ -71,7 +87,7 @@ export async function POST(
         {
           agent_id: id,
           beta_token: betaToken,
-          expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString(), // 30 days
+          expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(), // 24 hours
         },
       ])
       .select()
@@ -98,10 +114,22 @@ export async function GET(
 ) {
   try {
     const { id } = await params
-    const supabase = createServerSupabaseClient()
 
-    // Verify user is authenticated and is admin
-    const { data: { user }, error: authError } = await supabase.auth.getUser()
+    // Get auth token from header
+    const authHeader = request.headers.get('Authorization')
+    if (!authHeader?.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+    }
+
+    const token = authHeader.substring(7)
+
+    // Verify user via Supabase auth
+    const userSupabase = createClient(
+      process.env.NEXT_PUBLIC_SUPABASE_URL || '',
+      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
+    )
+
+    const { data: { user }, error: authError } = await userSupabase.auth.getUser(token)
 
     if (authError || !user?.id) {
       return NextResponse.json(
@@ -109,6 +137,9 @@ export async function GET(
         { status: 401 }
       )
     }
+
+    // Use admin Supabase for DB operations
+    const supabase = createServerSupabaseClient()
 
     // Check user role is admin
     const { data: userData } = await supabase

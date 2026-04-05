@@ -1,7 +1,7 @@
 'use client'
 
 import { use, useEffect, useState } from 'react'
-import { supabase } from '@/lib/supabase'
+import { v4 as uuidv4 } from 'uuid'
 import { ChatWindow } from '@/components/ChatWindow'
 import { MessageInput } from '@/components/MessageInput'
 import type { Agent } from '@/types/agent'
@@ -20,6 +20,7 @@ export default function BetaPage({ params }: BetaPageProps) {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [isSending, setIsSending] = useState(false)
+  const [conversationId] = useState(() => uuidv4()) // Generate temp conversation ID
 
   useEffect(() => {
     loadBetaAgent()
@@ -29,23 +30,16 @@ export default function BetaPage({ params }: BetaPageProps) {
     try {
       setLoading(true)
 
-      // Find agent by beta token
-      const { data: betaLink, error: betaError } = await supabase
-        .from('agent_beta_links')
-        .select('*, agents(*)')
-        .eq('beta_token', token)
-        .single()
+      // Fetch agent via API endpoint (bypasses RLS)
+      const response = await fetch(`/api/beta/${token}`)
 
-      if (betaError || !betaLink) {
-        throw new Error('Beta link inválido ou expirado')
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Beta link inválido ou expirado')
       }
 
-      // Check expiration
-      if (betaLink.expires_at && new Date(betaLink.expires_at) < new Date()) {
-        throw new Error('Beta link expirado')
-      }
-
-      setAgent(betaLink.agents as Agent)
+      const data = await response.json()
+      setAgent(data.agent as Agent)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Erro ao carregar agent')
     } finally {
@@ -70,7 +64,7 @@ export default function BetaPage({ params }: BetaPageProps) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          conversationId: null, // Beta doesn't save to DB
+          conversationId,
           agentId: agent.id,
           message: content,
         }),
@@ -81,7 +75,18 @@ export default function BetaPage({ params }: BetaPageProps) {
         throw new Error(errorData.error || 'Erro ao processar')
       }
 
-      const { message: assistantMsg } = await response.json()
+      // Read streaming response
+      const reader = response.body?.getReader()
+      if (!reader) throw new Error('No response body')
+
+      const decoder = new TextDecoder()
+      let assistantMsg = ''
+
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        assistantMsg += decoder.decode(value, { stream: true })
+      }
 
       setMessages((prev) => [
         ...prev,
@@ -91,6 +96,7 @@ export default function BetaPage({ params }: BetaPageProps) {
         },
       ])
     } catch (err) {
+      console.error('Chat error:', err)
       setError(err instanceof Error ? err.message : 'Erro ao enviar mensagem')
       // Remove user message on error
       setMessages((prev) => prev.slice(0, -1))
@@ -101,10 +107,10 @@ export default function BetaPage({ params }: BetaPageProps) {
 
   if (loading) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
+      <div className="h-screen flex items-center justify-center" style={{ backgroundColor: '#161616' }}>
         <div className="text-center">
-          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Carregando agent...</p>
+          <div className="w-12 h-12 border-4 border-[#e0521d] border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Carregando agent...</p>
         </div>
       </div>
     )
@@ -112,11 +118,10 @@ export default function BetaPage({ params }: BetaPageProps) {
 
   if (error) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
+      <div className="h-screen flex items-center justify-center" style={{ backgroundColor: '#161616' }}>
         <div className="text-center max-w-sm">
-          <p className="text-2xl mb-2">⚠️</p>
-          <p className="text-red-600 font-semibold mb-2">{error}</p>
-          <p className="text-gray-600 text-sm">
+          <p className="text-red-400 font-semibold mb-2">{error}</p>
+          <p className="text-gray-400 text-sm">
             Este link beta pode estar inválido ou expirado.
           </p>
         </div>
@@ -126,38 +131,37 @@ export default function BetaPage({ params }: BetaPageProps) {
 
   if (!agent) {
     return (
-      <div className="h-screen flex items-center justify-center bg-gray-50">
-        <p className="text-gray-600">Agent não encontrado</p>
+      <div className="h-screen flex items-center justify-center" style={{ backgroundColor: '#161616' }}>
+        <p className="text-gray-400">Agent não encontrado</p>
       </div>
     )
   }
 
   return (
-    <div className="h-screen flex bg-gray-50">
+    <div className="h-screen flex" style={{ backgroundColor: '#161616' }}>
       {/* Sidebar Info */}
-      <div className="w-80 bg-white border-r border-gray-200 p-6 overflow-y-auto">
+      <div className="w-80 border-r p-6 overflow-y-auto" style={{ backgroundColor: '#e0521d' }}>
         <div className="mb-6">
-          <span className="text-5xl block mb-4">{agent.icon || '🤖'}</span>
-          <h1 className="text-2xl font-bold text-gray-900 mb-2">
+          <h1 className="text-2xl font-bold text-white mb-2">
             {agent.name}
           </h1>
-          <p className="text-gray-600 text-sm mb-4">{agent.description}</p>
+          <p className="text-white text-sm mb-4 opacity-90">{agent.description}</p>
 
-          <div className="inline-block px-3 py-1 bg-blue-100 text-blue-700 text-xs font-semibold rounded-full">
-            🧪 Versão Beta
+          <div className="inline-block px-3 py-1 text-xs font-semibold rounded-full text-white" style={{ backgroundColor: 'rgba(255,255,255,0.2)' }}>
+            Teste Beta
           </div>
         </div>
 
-        <div className="border-t border-gray-200 pt-6">
-          <h2 className="font-semibold text-gray-900 mb-3 text-sm">
-            ℹ️ Sobre este Agent
+        <div className="border-t border-white border-opacity-20 pt-6">
+          <h2 className="font-semibold text-white mb-3 text-sm">
+            Sobre este Agent
           </h2>
-          <p className="text-sm text-gray-600 mb-4">
+          <p className="text-sm text-white opacity-90 mb-4">
             {agent.system_prompt.substring(0, 150)}...
           </p>
 
-          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 text-sm text-blue-800">
-            <p className="font-semibold mb-2">💡 Teste Privado</p>
+          <div className="rounded-lg p-4 text-sm text-white" style={{ backgroundColor: 'rgba(255,255,255,0.1)' }}>
+            <p className="font-semibold mb-2">Teste Privado</p>
             <p>
               Este é um teste beta. As mensagens <strong>não são salvas</strong>.
             </p>
@@ -166,8 +170,8 @@ export default function BetaPage({ params }: BetaPageProps) {
       </div>
 
       {/* Chat */}
-      <div className="flex-1 flex flex-col bg-gray-50 p-4">
-        <div className="flex-1 flex flex-col bg-white rounded-lg shadow-sm overflow-hidden">
+      <div className="flex-1 flex flex-col p-4">
+        <div className="flex-1 flex flex-col rounded-lg shadow-sm overflow-hidden" style={{ backgroundColor: '#222423' }}>
           <ChatWindow
             messages={messages}
             loading={isSending}

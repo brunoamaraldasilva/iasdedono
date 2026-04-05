@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 import { BetaLinkModal } from '@/components/admin/BetaLinkModal'
+import { MaterialsUpload } from '@/components/admin/MaterialsUpload'
 import toast from 'react-hot-toast'
 import type { Agent, AgentMaterial } from '@/types/agent'
 
@@ -24,11 +25,6 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     name: '',
     description: '',
     system_prompt: '',
-  })
-  const [newMaterial, setNewMaterial] = useState({
-    title: '',
-    content: '',
-    type: 'context' as const,
   })
   const [showBetaModal, setShowBetaModal] = useState(false)
 
@@ -56,15 +52,12 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         system_prompt: agentData.system_prompt,
       })
 
-      // Load materials
-      const { data: materialsData, error: materialsError } = await supabase
-        .from('agent_materials')
-        .select('*')
-        .eq('agent_id', id)
-        .order('order', { ascending: true })
-
-      if (materialsError) throw materialsError
-
+      // Load materials via API (uses admin client to bypass RLS)
+      const materialsResponse = await fetch(`/api/agents/${id}/materials`)
+      if (!materialsResponse.ok) {
+        throw new Error('Failed to load materials')
+      }
+      const materialsData = await materialsResponse.json()
       setMaterials(materialsData || [])
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erro ao carregar agent')
@@ -118,49 +111,39 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     }
   }
 
-  const handleAddMaterial = async () => {
-    if (!newMaterial.title || !newMaterial.content) {
-      toast.error('Preencha título e conteúdo')
-      return
-    }
-
-    try {
-      const { error } = await supabase
-        .from('agent_materials')
-        .insert([
-          {
-            agent_id: id,
-            ...newMaterial,
-            order: materials.length,
-          },
-        ])
-
-      if (error) throw error
-
-      toast.success('Material adicionado!')
-      setNewMaterial({ title: '', content: '', type: 'context' })
-      await loadAgent()
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : 'Erro ao adicionar')
-    }
-  }
 
   const handleDeleteMaterial = async (materialId: string) => {
     if (!confirm('Deseja deletar este material?')) return
 
     try {
-      const { error } = await supabase
-        .from('agent_materials')
-        .delete()
-        .eq('id', materialId)
+      // Get auth token
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+      if (sessionError || !session?.access_token) {
+        throw new Error('Session expired')
+      }
 
-      if (error) throw error
+      // Call delete endpoint (uses admin client to bypass RLS)
+      const response = await fetch(`/api/agents/${id}/materials/${materialId}/delete`, {
+        method: 'DELETE',
+        headers: {
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+      })
+
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Erro ao deletar material')
+      }
 
       toast.success('Material removido!')
       setMaterials((prev) => prev.filter((m) => m.id !== materialId))
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Erro ao deletar')
     }
+  }
+
+  const handleMaterialAdded = (material: AgentMaterial) => {
+    setMaterials((prev) => [material, ...prev])
   }
 
   if (loading) {
@@ -258,58 +241,16 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         <div className="rounded-lg shadow-sm p-6" style={{ backgroundColor: '#222423', border: '1px solid #333333' }}>
           <h2 className="text-xl font-bold text-white mb-4">Materiais</h2>
 
-          {/* Add Material */}
-          <div className="mb-6 p-4 rounded-lg" style={{ backgroundColor: '#161616', border: '1px solid #333333' }}>
-            <h3 className="font-semibold text-white mb-3">Adicionar Material</h3>
-
-            <div className="space-y-3">
-              <input
-                type="text"
-                placeholder="Título"
-                value={newMaterial.title}
-                onChange={(e) =>
-                  setNewMaterial((prev) => ({ ...prev, title: e.target.value }))
-                }
-                className="w-full px-3 py-2 rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-[#e0521d] outline-none transition"
-                style={{ backgroundColor: '#222423', border: '1px solid #333333' }}
-              />
-
-              <textarea
-                placeholder="Conteúdo"
-                value={newMaterial.content}
-                onChange={(e) =>
-                  setNewMaterial((prev) => ({ ...prev, content: e.target.value }))
-                }
-                rows={3}
-                className="w-full px-3 py-2 rounded-lg text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-[#e0521d] outline-none transition resize-none"
-                style={{ backgroundColor: '#222423', border: '1px solid #333333' }}
-              />
-
-              <select
-                value={newMaterial.type}
-                onChange={(e) =>
-                  setNewMaterial((prev) => ({
-                    ...prev,
-                    type: e.target.value as any,
-                  }))
-                }
-                className="w-full px-3 py-2 rounded-lg text-sm text-white focus:ring-2 focus:ring-[#e0521d] outline-none transition"
-                style={{ backgroundColor: '#222423', border: '1px solid #333333' }}
-              >
-                <option value="context">Contexto</option>
-                <option value="document">Documento</option>
-                <option value="resource">Recurso</option>
-              </select>
-
-              <button
-                onClick={handleAddMaterial}
-                className="w-full text-white font-semibold py-2 rounded-lg transition hover:opacity-80"
-                style={{ backgroundColor: '#e0521d' }}
-              >
-                + Adicionar
-              </button>
-            </div>
+          {/* Upload Files */}
+          <div className="mb-6">
+            <h3 className="font-semibold text-white mb-3">Anexar Arquivo</h3>
+            <MaterialsUpload
+              agentId={id}
+              onMaterialAdded={handleMaterialAdded}
+              materialType="resource"
+            />
           </div>
+
 
           {/* Materials List */}
           <div className="space-y-3">
@@ -323,7 +264,17 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                   style={{ backgroundColor: '#161616', border: '1px solid #333333' }}
                 >
                   <div className="flex-1">
-                    <p className="font-semibold text-white">{material.title}</p>
+                    <div className="flex items-center gap-2">
+                      {material.is_file_based && (
+                        <span className="text-lg">📄</span>
+                      )}
+                      <p className="font-semibold text-white">{material.title}</p>
+                    </div>
+                    {material.is_file_based && material.file_size && (
+                      <p className="text-xs text-gray-500 mt-1">
+                        {material.file_type?.toUpperCase()} • {(material.file_size / 1024).toFixed(1)}KB
+                      </p>
+                    )}
                     <p className="text-sm text-gray-400 mt-1 line-clamp-2">
                       {material.content}
                     </p>

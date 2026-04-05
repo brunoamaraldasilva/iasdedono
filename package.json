@@ -11,6 +11,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.101.1",
     "axios": "^1.14.0",
+    "cheerio": "^1.2.0",
     "docx": "^9.6.1",
     "js-tiktoken": "^1.0.21",
     "jszip": "^3.10.1",
@@ -25,6 +26,7 @@
     "react-hot-toast": "^2.6.0",
     "react-markdown": "^10.1.0",
     "recharts": "^3.8.1",
+    "remark-gfm": "^4.0.1",
     "uuid": "^13.0.0",
     "xlsx": "^0.18.5",
     "zustand": "^5.0.12"
