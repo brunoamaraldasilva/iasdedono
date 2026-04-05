@@ -220,6 +220,12 @@ You have access to web_scrape tool to extract full content from specific URLs.
         // Execute each tool call
         for (const toolCall of message.tool_calls) {
           try {
+            // Type guard for function-type tool calls
+            if (!('function' in toolCall)) {
+              console.warn('[WARN] [OPENAI] Tool call does not have function property')
+              continue
+            }
+
             const toolInput = JSON.parse(toolCall.function.arguments)
             const toolResult = await onToolCall!(toolCall.function.name, toolInput)
 
@@ -232,7 +238,7 @@ You have access to web_scrape tool to extract full content from specific URLs.
 
             console.log('[OK] [OPENAI] Tool ' + toolCall.function.name + ' executed successfully')
           } catch (toolError) {
-            console.error('[ERROR] [OPENAI] Error executing tool ' + toolCall.function.name + ':', toolError)
+            console.error('[ERROR] [OPENAI] Error executing tool:', toolError)
             requestMessages.push({
               role: 'tool',
               tool_call_id: toolCall.id,

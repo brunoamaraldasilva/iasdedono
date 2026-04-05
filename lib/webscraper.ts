@@ -31,7 +31,7 @@ export async function scrapeUrl(url: string, selector?: string): Promise<Scraped
 
     // Checar blocklist
     if (BLOCKED_DOMAINS.some((domain) => urlObj.hostname.includes(domain))) {
-      throw new Error('Domain ' + domain + ' is blocked for scraping')
+      throw new Error('Domain ' + urlObj.hostname + ' is blocked for scraping')
     }
 
     // HTTP request com timeout
