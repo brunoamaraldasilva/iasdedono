@@ -328,34 +328,38 @@ ${material.content}`
       const adminSupabaseClient = createAdminSupabaseClient()
       const docClient = adminSupabaseClient || supabase
 
-      const { data: docs } = await docClient
-        .from('documents')
-        .select('id, filename, extracted_text')
-        .in('id', documentIds)
+      if (!docClient) {
+        console.error('[CHAT] Document client not available')
+      } else {
+        const { data: docs } = await docClient
+          .from('documents')
+          .select('id, filename, extracted_text')
+          .in('id', documentIds)
 
-      if (docs && docs.length > 0) {
-        console.log('📄 [CHAT] Document details:', docs.map(d => ({
-          id: d.id,
-          filename: d.filename,
-          textLength: d.extracted_text?.length || 0,
-          hasText: !!d.extracted_text
-        })))
+        if (docs && docs.length > 0) {
+          console.log('📄 [CHAT] Document details:', docs.map(d => ({
+            id: d.id,
+            filename: d.filename,
+            textLength: d.extracted_text?.length || 0,
+            hasText: !!d.extracted_text
+          })))
 
-        systemPrompt += `
+          systemPrompt += `
 
 ## Documentos Anexados à Conversa:`
-        docs.forEach((doc) => {
-          if (doc.extracted_text) {
-            systemPrompt += `
+          docs.forEach((doc) => {
+            if (doc.extracted_text) {
+              systemPrompt += `
 
 ### ${doc.filename}
 ${doc.extracted_text}`
-            console.log(`✅ [CHAT] Added text from ${doc.filename} (${doc.extracted_text.length} chars)`)
-          } else {
-            console.warn(`⚠️ [CHAT] Document ${doc.filename} has no extracted_text!`)
-          }
-        })
-        console.log('✅ [CHAT] Added', docs.length, 'documents to context')
+              console.log(`✅ [CHAT] Added text from ${doc.filename} (${doc.extracted_text.length} chars)`)
+            } else {
+              console.warn(`⚠️ [CHAT] Document ${doc.filename} has no extracted_text!`)
+            }
+          })
+          console.log('✅ [CHAT] Added', docs.length, 'documents to context')
+        }
       }
     }
 
