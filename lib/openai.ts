@@ -35,7 +35,7 @@ export async function generateChatResponse(
 
 // Tool definition for web search
 const WEB_SEARCH_TOOL = {
-  type: 'function',
+  type: 'function' as const,
   function: {
     name: 'web_search',
     description: 'Search the web for current information when you need up-to-date facts, recent news, or information beyond your training data. Use this when the user asks about recent events, current prices, new products, or information that changes frequently.',
@@ -54,7 +54,7 @@ const WEB_SEARCH_TOOL = {
 
 // Tool definition for web scraping
 const WEB_SCRAPE_TOOL = {
-  type: 'function',
+  type: 'function' as const,
   function: {
     name: 'web_scrape',
     description: 'Scrape the full content of a specific URL to get detailed information. Use this when you need to analyze a specific page or link in detail, not just search results. Only use for URLs provided by the user or found in search results.',
