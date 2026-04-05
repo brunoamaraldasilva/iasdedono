@@ -224,13 +224,17 @@ export async function POST(request: NextRequest) {
     }
 
     // Get agent materials via admin client (bypasses RLS)
-    const { data: materials } = await adminSupabase
-      .from('agent_materials')
-      .select('*')
-      .eq('agent_id', agentId)
-      .order('order', { ascending: true })
+    let materials = []
+    if (adminSupabase) {
+      const { data: materialsData } = await adminSupabase
+        .from('agent_materials')
+        .select('*')
+        .eq('agent_id', agentId)
+        .order('order', { ascending: true })
+      materials = materialsData || []
+    }
 
-    if (materials && materials.length > 0) {
+    if (materials.length > 0) {
       console.log('[CHAT] Loading agent materials:', materials.length)
       systemPrompt += `
 
