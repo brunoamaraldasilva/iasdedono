@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
 import { rateLimit } from '@/lib/rateLimit'
+import { syncUserProfile } from '@/lib/userProfileSync'
 
 export async function POST(request: NextRequest) {
   try {
@@ -181,6 +182,9 @@ export async function POST(request: NextRequest) {
           // Continue anyway - profile will be created on first login
         }
       }
+
+      // ✅ Sync to user_profiles table for fast indexing + RLS
+      await syncUserProfile(userId, email)
     }
 
     return NextResponse.json({

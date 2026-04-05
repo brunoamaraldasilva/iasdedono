@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { syncUserProfile } from '@/lib/userProfileSync'
 
 export async function POST(request: NextRequest) {
   try {
@@ -59,6 +60,11 @@ export async function POST(request: NextRequest) {
 
     // ✅ NEW: Log successful login
     console.log('🔐 [LOGIN-WHITELIST] ✅ Login successful for:', email)
+
+    // ✅ Sync user profile if missing (backup for users who signed up before sync feature)
+    if (data.user.id && data.user.email) {
+      await syncUserProfile(data.user.id, data.user.email)
+    }
 
     return NextResponse.json({
       success: true,
