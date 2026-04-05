@@ -203,7 +203,7 @@ export async function POST(request: NextRequest) {
         .select('*')
         .eq('conversation_id', conversationId)
         .order('created_at', { ascending: false })
-        .limit(15)
+        .limit(7)
       messagesData = msgs || []
     }
 

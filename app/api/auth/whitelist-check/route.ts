@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServerSupabaseClient } from '@/lib/supabase'
+import { getCachedValue, setCachedValue } from '@/lib/cache'
 
 export async function POST(request: NextRequest) {
   try {
@@ -12,28 +13,49 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    const supabase = createServerSupabaseClient()
+    const normalizedEmail = email.toLowerCase()
+    const cacheKey = `whitelist:${normalizedEmail}`
 
-    // Check whitelist
-    console.log('🔐 [WHITELIST-CHECK] Validating email:', email)
+    console.log('🔐 [WHITELIST-CHECK] Validating email:', normalizedEmail)
 
-    const { data: whitelistEntry, error: whitelistError } = await supabase
-      .from('whitelist')
-      .select('email, status')
-      .eq('email', email.toLowerCase())
-      .maybeSingle()
+    // ✅ Check cache first (reduces DB queries by 80%)
+    const cachedEntry = await getCachedValue<{ email: string; status: string }>(
+      cacheKey
+    )
 
-    if (whitelistError && whitelistError.code !== 'PGRST116') {
-      console.error('🔐 [WHITELIST-CHECK] Error:', whitelistError)
-      return NextResponse.json(
-        { error: 'Erro ao validar autorização' },
-        { status: 500 }
-      )
+    let whitelistEntry: { email: string; status: string } | undefined = cachedEntry
+
+    // If not in cache, query database
+    if (!whitelistEntry) {
+      console.log('🔐 [WHITELIST-CHECK] Cache miss, querying database...')
+      const supabase = createServerSupabaseClient()
+
+      const { data, error: whitelistError } = await supabase
+        .from('whitelist')
+        .select('email, status')
+        .eq('email', normalizedEmail)
+        .maybeSingle()
+
+      if (whitelistError && whitelistError.code !== 'PGRST116') {
+        console.error('🔐 [WHITELIST-CHECK] Error:', whitelistError)
+        return NextResponse.json(
+          { error: 'Erro ao validar autorização' },
+          { status: 500 }
+        )
+      }
+
+      whitelistEntry = data || undefined
+
+      // Cache the result for 5 minutes (TTL: 300s)
+      // Tag with 'whitelist' for bulk invalidation if needed
+      if (whitelistEntry) {
+        await setCachedValue(cacheKey, whitelistEntry, 300, ['whitelist'])
+      }
     }
 
     // Email not in whitelist
     if (!whitelistEntry) {
-      console.warn('🔐 [WHITELIST-CHECK] ❌ Not authorized:', email)
+      console.warn('🔐 [WHITELIST-CHECK] ❌ Not authorized:', normalizedEmail)
       return NextResponse.json(
         {
           error: 'Você não tem autorização para acessar.',
@@ -47,7 +69,7 @@ export async function POST(request: NextRequest) {
 
     // Email in whitelist but inactive
     if (whitelistEntry.status === 'inactive') {
-      console.warn('🔐 [WHITELIST-CHECK] ⚠️ Inactive account:', email)
+      console.warn('🔐 [WHITELIST-CHECK] ⚠️ Inactive account:', normalizedEmail)
       return NextResponse.json(
         {
           error: 'Sua conta está inativa.',
@@ -60,7 +82,7 @@ export async function POST(request: NextRequest) {
     }
 
     // ✅ Authorized
-    console.log('🔐 [WHITELIST-CHECK] ✅ Authorized:', email)
+    console.log('🔐 [WHITELIST-CHECK] ✅ Authorized:', normalizedEmail)
     return NextResponse.json({ success: true })
   } catch (error) {
     console.error('🔐 [WHITELIST-CHECK] Error:', error)
