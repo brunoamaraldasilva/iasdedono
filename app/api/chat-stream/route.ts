@@ -137,12 +137,19 @@ export async function GET(request: NextRequest) {
             console.log(`⚡ [CHAT-STREAM] Cache HIT - sending cached response as SSE`)
             // Send cached response in chunks via SSE
             const chunkSize = 20
+            let cachedChunkCount = 0
+            const cacheStartTime = Date.now()
             for (let i = 0; i < cachedResponse.length; i += chunkSize) {
               const chunk = cachedResponse.substring(i, i + chunkSize)
+              cachedChunkCount++
+              const delayStart = Date.now()
               controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
               await new Promise(resolve => setTimeout(resolve, 10))
+              const delayEnd = Date.now()
+              console.log(`[DIAGNOSTIC-CACHE] Cached chunk ${cachedChunkCount}: ${chunk.length} chars, actual delay: ${delayEnd - delayStart}ms`)
             }
             controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            console.log(`[DIAGNOSTIC-CACHE] Cached stream complete: ${cachedChunkCount} chunks in ${Date.now() - cacheStartTime}ms`)
             controller.close()
             return
           }
@@ -150,11 +157,14 @@ export async function GET(request: NextRequest) {
           // Generate response with streaming
           console.log(`🎯 [CHAT-STREAM] Starting chat with Tool Calling support...`)
 
+          let liveChunkCount = 0
           for await (const chunk of generateChatResponseWithTools(systemPrompt, chatMessages)) {
             fullResponse += chunk
 
             // Send chunk via SSE
             const sseChunk = `data: ${JSON.stringify({ content: chunk })}\n\n`
+            liveChunkCount++
+            const delayStart = Date.now()
             controller.enqueue(encoder.encode(sseChunk))
 
             if (!firstChunkSent) {
@@ -169,6 +179,10 @@ export async function GET(request: NextRequest) {
             // Result: All chunks processed in single React render cycle (no streaming UX)
             // Solution: Minimal await breaks the tight loop and prevents bundling
             await new Promise(resolve => setTimeout(resolve, 0))
+            const delayEnd = Date.now()
+            if (liveChunkCount <= 10 || liveChunkCount % 50 === 0) {
+              console.log(`[DIAGNOSTIC-LIVE] Live chunk ${liveChunkCount}: ${chunk.length} chars, actual delay: ${delayEnd - delayStart}ms`)
+            }
           }
 
           // Send completion marker

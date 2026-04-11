@@ -254,7 +254,8 @@ export function useChat(conversationId: string) {
 
         eventSource.addEventListener('message', (event: MessageEvent) => {
           try {
-            console.log(`[PHASE 3] EventSource message received:`, {
+            const now = Date.now()
+            console.log(`[DIAGNOSTIC] EventSource message #${chunkCount + 1} at ${now - sseStartTime}ms:`, {
               dataLength: event.data.length,
               isComplete: event.data === 'data: [DONE]' || event.data === '[DONE]',
               preview: event.data.substring(0, 50)
@@ -287,6 +288,7 @@ export function useChat(conversationId: string) {
                   contentLength: finalContent.length
                 })
                 messagesRef.current = updated
+                console.log(`[DIAGNOSTIC] Calling setMessages with final content (${finalContent.length} chars)`)
                 setMessages(updated)
               }
 
@@ -325,6 +327,7 @@ export function useChat(conversationId: string) {
                 assistantIndexRef.current = updated.length - 1
 
                 setLoading(false)
+                console.log(`[DIAGNOSTIC] Calling setMessages with first chunk (${chunk.length} chars)`)
                 setMessages(updated)  // Force re-render with known good state
 
                 // Accumulate the first chunk
@@ -348,9 +351,13 @@ export function useChat(conversationId: string) {
                   // FIX: Use setTimeout(0) to force macrotask, not microtask
                   // MessageChannel still uses microtasks which React 18 batches
                   // setTimeout creates separate macrotask = separate React batch
+                  console.log(`[DIAGNOSTIC] Scheduling setMessages with setTimeout(0) for chunk #${chunkCount} (accumulated: ${newContent.length} chars)`)
                   setTimeout(() => {
+                    console.log(`[DIAGNOSTIC] setTimeout(0) fired - calling setMessages with ${newContent.length} chars`)
                     setMessages(updated)
                   }, 0)
+                } else {
+                  console.warn(`[DIAGNOSTIC] Invalid assistantIndex: ${assistantIndexRef.current}, messagesRef.length: ${messagesRef.current.length}`)
                 }
               }
 
