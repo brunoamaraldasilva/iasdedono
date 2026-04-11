@@ -30,8 +30,7 @@ export function ChatWindow({
 
   // Log whenever messages prop changes
   useEffect(() => {
-    const now = new Date().toLocaleTimeString()
-    console.log(`[DIAGNOSTIC] ChatWindow render #${messages.length} at ${now}:`, {
+    console.log(`[PHASE 5] ChatWindow received messages prop:`, {
       count: messages.length,
       loading,
       isLoadingMessages,
@@ -42,7 +41,7 @@ export function ChatWindow({
 
     // DEBUG: Log what will actually render
     if (messages.length > 0) {
-      console.log(`[DIAGNOSTIC] All messages:`, messages.map((msg, idx) => ({
+      console.log(`[DEBUG] Messages array content:`, messages.map((msg, idx) => ({
         index: idx,
         role: msg.role,
         contentLength: msg.content?.length,
