@@ -275,12 +275,34 @@ export function useChat(conversationId: string) {
               console.log(`   Total chunks: ${chunkCount}`)
               console.log(`   Total chars: ${totalChars}`)
               console.log(`   Total time: ${totalTime}ms`)
-              console.log(`📋 [PHASE 4] Final messagesRef state:`, {
-                length: messagesRef.current.length,
-                assistantIndex: assistantIndex,
-                assistantContentLength: messagesRef.current[assistantIndex]?.content?.length || 0,
-                assistantContent: messagesRef.current[assistantIndex]?.content?.substring(0, 150)
+
+              // Get final accumulated content
+              const finalContent = streamingRef.current.get(streamId) || ''
+              console.log(`📋 [PHASE 4] Final accumulated content:`, {
+                streamId,
+                contentLength: finalContent.length,
+                preview: finalContent.substring(0, 150)
               })
+
+              // **CRITICAL FIX**: Single state update with final content
+              // Don't batch updates - do ONE final update after stream completes
+              setMessages((prev) => {
+                if (assistantIndex < prev.length) {
+                  const updated = [...prev]
+                  updated[assistantIndex] = {
+                    role: 'assistant',
+                    content: finalContent,
+                  }
+                  console.log(`✅ [PHASE 4] Final state update applied:`, {
+                    assistantIndex,
+                    contentLength: finalContent.length
+                  })
+                  messagesRef.current = updated
+                  return updated
+                }
+                return prev
+              })
+
               eventSource.close()
 
               // After message completes, emit event to refresh conversations list
@@ -303,47 +325,12 @@ export function useChat(conversationId: string) {
                 console.log(`📦 [SSE] Chunk ${chunkCount}: ${chunk.length} chars`)
               }
 
-              // Accumulate in ref
+              // Accumulate ONLY in ref - NO state updates during streaming
               const current = streamingRef.current.get(streamId) || ''
               const newContent = current + chunk
               streamingRef.current.set(streamId, newContent)
 
-              // Update state with new content - batch updates for performance
-              // React will render periodically which provides streaming effect
-              setMessages((prev) => {
-                console.log(`[PHASE 3.5] setMessages callback - prev state:`, {
-                  prevLength: prev.length,
-                  assistantIndex: assistantIndex,
-                  assistantExists: assistantIndex < prev.length,
-                  currentAssistantContentLength: prev[assistantIndex]?.content?.length || 0
-                })
-
-                if (assistantIndex < prev.length) {
-                  const updated = [...prev]
-                  updated[assistantIndex] = {
-                    role: 'assistant',
-                    content: newContent,
-                  }
-                  console.log(`[PHASE 3.6] State updated with new content:`, {
-                    assistantIndex,
-                    updatedLength: updated.length,
-                    contentLength: newContent.length,
-                    chunkNumber: chunkCount,
-                    preview: newContent.substring(0, 80)
-                  })
-                  return updated
-                } else {
-                  console.warn(`⚠️ [SSE] assistantIndex ${assistantIndex} >= prev.length ${prev.length}`)
-                }
-                return prev
-              })
-
-              // Also sync ref
-              messagesRef.current = messagesRef.current.map((msg, idx) =>
-                idx === assistantIndex
-                  ? { ...msg, content: newContent }
-                  : msg
-              )
+              console.log(`[PHASE 3.6] Accumulated ${chunkCount}: ${newContent.length} total chars`)
             }
           } catch (error) {
             console.error('[SSE] Error parsing message:', error)
