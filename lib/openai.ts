@@ -114,72 +114,15 @@ export async function* generateChatResponseWithTools(
   try {
     const systemWithInstructions = systemPrompt + `
 
-## Web Search Capability - Be Smart About Usage
-You have access to a web_search tool. Use it ONLY when necessary:
+## Web Search & Scraping
 
-✅ USE web search when:
-- User explicitly asks "latest news", "recent", "2024", "2025", "2026"
-- Topic requires current data (prices, stock prices, product availability, recent events)
-- User asks "what's new", "what happened recently", "latest"
-- Information is time-sensitive and could have changed
+**Web Search:** Use ONLY for recent/time-sensitive info (news, prices, 2025+). NOT general knowledge.
 
-❌ DON'T use web search for:
-- General knowledge (geography, history, math, science fundamentals)
-- Questions about timeless topics (e.g., "what is photosynthesis?")
-- Simple calculations or logic problems
-- Questions that don't mention recency or current information
-- Anything you're confident about from training data
+**Source Format (MANDATORY):**
+End with: ---
+**Fontes:** [Title](https://url.com)
 
-🎯 Be efficient: Conserve API calls, only search when truly needed
-
-## Source Citation Instructions - CRITICAL & MANDATORY
-VOCÊ DEVE seguir EXACTAMENTE estas instruções quando usar web search:
-
-1. SEMPRE cite a URL completa, NÃO apenas o nome do site
-2. Use markdown links format: [Título da Fonte](https://url.com.br)
-3. IMPORTANTE: Coloque a URL entre parênteses no formato markdown
-
-4. OBRIGATÓRIO: No FINAL da sua resposta, se usou web search, ADICIONE:
-   ---
-   **Fontes Utilizadas:**
-   - [Título da Notícia 1](https://url-completa-aqui.com.br)
-   - [Título da Notícia 2](https://outra-url.com.br)
-   - [Título da Notícia 3](https://terceira-url.com.br)
-
-5. EXEMPLO CORRETO:
-"Segundo relatórios recentes, a TikTok está buscando [aval do Banco Central](https://www.infomoney.com.br/...) para atuar como fintech..."
-
-6. DEPOIS DA RESPOSTA, SEMPRE inclua:
----
-**Fontes Utilizadas:**
-- [TikTok Busca Aval do Banco Central](https://www.infomoney.com.br/mercados/tiktok-busca-aval-do-banco-central)
-- [Regulação da Fintech](https://www.finsiders.com.br/artigo)
-- [Taxação de Fintechs](https://www.cnnnbrasil.com.br/economia)
-
-⚠️ NUNCA coloque apenas "Fonte: InfoMoney" sem URL
-⚠️ NUNCA esqueça a seção "Fontes Utilizadas:" no final
-⚠️ SEMPRE use markdown links: [texto](url)
-
-## Web Scraping Capability - Smart Content Extraction
-You have access to web_scrape tool to extract full content from specific URLs.
-
-✅ USE web_scrape when:
-- User provides a specific URL they want analyzed
-- User asks "read this page", "check this link", "aprofunda nesse artigo", "explica esse link"
-- You found a relevant URL in search results and need detailed content for your response
-- User provides a link in the conversation
-
-❌ DON'T use web_scrape for:
-- Scraping multiple pages in sequence (too slow, wastes API calls)
-- Links you created yourself or just recommended
-- Pages that require authentication
-- Large datasets or bulk scraping
-
-💡 Strategy: Combine web_search + web_scrape:
-1. User asks about recent news → web_search finds sources
-2. User says "aprofunda" or "explica esse" → web_scrape one of the best results
-3. Extract key info, provide detailed answer with full sources
-`
+**Web Scrape:** Detailed content when URL provided.`
 
     let requestMessages: any[] = [
       {
