@@ -20,6 +20,7 @@ export function useChat(conversationId: string) {
   // Load conversation and agent on mount
   useEffect(() => {
     isMountedRef.current = true
+    console.log(`[PHASE 1] Hook mounted for conversation: ${conversationId}`)
 
     const loadConversation = async () => {
       try {
@@ -231,6 +232,12 @@ export function useChat(conversationId: string) {
       const messagesWithAssistant = [...messagesRef.current, assistantMessage]
       const assistantIndex = messagesWithAssistant.length - 1
 
+      console.log(`[PHASE 2] Adding empty assistant message:`, {
+        assistantIndex,
+        totalMessages: messagesWithAssistant.length,
+        contentLength: assistantMessage.content.length
+      })
+
       setMessages(messagesWithAssistant)
       messagesRef.current = messagesWithAssistant
       streamingRef.current.set(streamId, '')
@@ -256,12 +263,24 @@ export function useChat(conversationId: string) {
 
         eventSource.addEventListener('message', (event: MessageEvent) => {
           try {
+            console.log(`[PHASE 3] EventSource message received:`, {
+              dataLength: event.data.length,
+              isComplete: event.data === 'data: [DONE]' || event.data === '[DONE]',
+              preview: event.data.substring(0, 50)
+            })
+
             if (event.data === 'data: [DONE]' || event.data === '[DONE]') {
               const totalTime = Date.now() - sseStartTime
               console.log(`✅ [SSE] Stream completo!`)
               console.log(`   Total chunks: ${chunkCount}`)
               console.log(`   Total chars: ${totalChars}`)
               console.log(`   Total time: ${totalTime}ms`)
+              console.log(`📋 [PHASE 4] Final messagesRef state:`, {
+                length: messagesRef.current.length,
+                assistantIndex: assistantIndex,
+                assistantContentLength: messagesRef.current[assistantIndex]?.content?.length || 0,
+                assistantContent: messagesRef.current[assistantIndex]?.content?.substring(0, 150)
+              })
               eventSource.close()
 
               // After message completes, emit event to refresh conversations list
@@ -292,16 +311,39 @@ export function useChat(conversationId: string) {
               // Update state with new content - batch updates for performance
               // React will render periodically which provides streaming effect
               setMessages((prev) => {
+                console.log(`[PHASE 3.5] setMessages callback - prev state:`, {
+                  prevLength: prev.length,
+                  assistantIndex: assistantIndex,
+                  assistantExists: assistantIndex < prev.length,
+                  currentAssistantContentLength: prev[assistantIndex]?.content?.length || 0
+                })
+
                 if (assistantIndex < prev.length) {
                   const updated = [...prev]
                   updated[assistantIndex] = {
                     role: 'assistant',
                     content: newContent,
                   }
+                  console.log(`[PHASE 3.6] State updated with new content:`, {
+                    assistantIndex,
+                    updatedLength: updated.length,
+                    contentLength: newContent.length,
+                    chunkNumber: chunkCount,
+                    preview: newContent.substring(0, 80)
+                  })
                   return updated
+                } else {
+                  console.warn(`⚠️ [SSE] assistantIndex ${assistantIndex} >= prev.length ${prev.length}`)
                 }
                 return prev
               })
+
+              // Also sync ref
+              messagesRef.current = messagesRef.current.map((msg, idx) =>
+                idx === assistantIndex
+                  ? { ...msg, content: newContent }
+                  : msg
+              )
             }
           } catch (error) {
             console.error('[SSE] Error parsing message:', error)

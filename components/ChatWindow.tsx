@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
+
+// Ensure useEffect is imported (already is, but making explicit)
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import type { ChatMessage } from '@/types/chat'
@@ -25,6 +27,18 @@ export function ChatWindow({
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const [messageSources, setMessageSources] = useState<Map<number, SourceData[]>>(new Map())
+
+  // Log whenever messages prop changes
+  useEffect(() => {
+    console.log(`[PHASE 5] ChatWindow received messages prop:`, {
+      count: messages.length,
+      loading,
+      isLoadingMessages,
+      lastMessage: messages[messages.length - 1]?.role,
+      lastMessageLength: messages[messages.length - 1]?.content?.length || 0,
+      preview: messages[messages.length - 1]?.content?.substring(0, 80)
+    })
+  }, [messages, loading, isLoadingMessages])
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
