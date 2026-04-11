@@ -344,11 +344,12 @@ export function useChat(conversationId: string) {
                   }
                   messagesRef.current = updated
 
-                  // Break React batching with setTimeout(0) to force intermediate renders
-                  // This prevents all setMessages calls from being batched into one final render
-                  setTimeout(() => {
+                  // Break React batching with requestAnimationFrame
+                  // RAF is more effective than setTimeout for breaking React 18 batching
+                  // Each chunk gets its own frame render cycle
+                  requestAnimationFrame(() => {
                     setMessages(updated)
-                  }, 0)
+                  })
                 }
               }
 
