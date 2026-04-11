@@ -222,48 +222,6 @@ export function useChat(conversationId: string) {
         throw new Error('Sessão expirada. Por favor, recarregue a página e faça login novamente.')
       }
 
-      // Call chat API with streaming
-      const fetchStartTime = Date.now()
-      console.log(`🚀 [STREAM-DEBUG] Iniciando fetch para /api/chat`)
-      console.log(`   Token: ${accessToken.substring(0, 20)}...`)
-      console.log(`   Conversation: ${conversationId}`)
-      console.log(`   Agent: ${agent.id}`)
-      console.log(`   Message: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`)
-
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
-        },
-        body: JSON.stringify({
-          conversationId,
-          agentId: agent.id,
-          message: content,
-          isFirstMessage,
-          documentIds,
-        }),
-      })
-
-      const fetchEndTime = Date.now()
-      console.log(`📡 [STREAM-DEBUG] Response recebida após ${fetchEndTime - fetchStartTime}ms`)
-      console.log(`   Status: ${response.status}`)
-      console.log(`   Content-Type: ${response.headers.get('Content-Type')}`)
-      console.log(`   Transfer-Encoding: ${response.headers.get('Transfer-Encoding') || 'NONE'}`)
-      console.log(`   X-Cache: ${response.headers.get('X-Cache') || 'N/A'}`)
-
-      if (!response.ok) {
-        let errorMessage = 'Erro ao processar mensagem'
-        try {
-          const errorData = await response.json()
-          errorMessage = errorData.error || errorMessage
-        } catch (e) {
-          // Se não conseguir fazer parse do JSON, usa mensagem genérica
-        }
-        console.error(`❌ [STREAM-DEBUG] API error: ${errorMessage}`)
-        throw new Error(errorMessage)
-      }
-
       // Add assistant message placeholder with loading indicator
       const assistantMessage: ChatMessage = {
         role: 'assistant',
@@ -277,69 +235,86 @@ export function useChat(conversationId: string) {
       messagesRef.current = messagesWithAssistant
       streamingRef.current.set(streamId, '')
 
-      // Read streaming response
-      const reader = response.body?.getReader()
-      const decoder = new TextDecoder()
+      // Use Server-Sent Events for streaming
+      const sseStartTime = Date.now()
+      console.log(`🎯 [SSE] Iniciando SSE stream para /api/chat-stream`)
 
-      if (!reader) throw new Error('Erro ao iniciar streaming')
+      return new Promise<void>((resolve, reject) => {
+        const eventSource = new EventSource(
+          `/api/chat-stream?${new URLSearchParams({
+            conversationId,
+            agentId: agent.id,
+            message: content,
+            isFirstMessage: String(isFirstMessage),
+            documentIds: documentIds?.join(',') || '',
+            token: accessToken,
+          }).toString()}`
+        )
 
-      try {
         let chunkCount = 0
         let totalChars = 0
-        const streamStartTime = Date.now()
-        let lastChunkTime = streamStartTime
 
-        console.log(`📥 [STREAM-DEBUG] Começando a ler stream...`)
+        eventSource.addEventListener('message', (event: MessageEvent) => {
+          try {
+            if (event.data === 'data: [DONE]' || event.data === '[DONE]') {
+              const totalTime = Date.now() - sseStartTime
+              console.log(`✅ [SSE] Stream completo!`)
+              console.log(`   Total chunks: ${chunkCount}`)
+              console.log(`   Total chars: ${totalChars}`)
+              console.log(`   Total time: ${totalTime}ms`)
+              eventSource.close()
 
-        while (true) {
-          const readStartTime = Date.now()
-          const { done, value } = await reader.read()
-          const readEndTime = Date.now()
-
-          if (done) {
-            const totalTime = Date.now() - streamStartTime
-            console.log(`✅ [STREAM-DEBUG] Stream completo!`)
-            console.log(`   Total chunks: ${chunkCount}`)
-            console.log(`   Total chars: ${totalChars}`)
-            console.log(`   Total time: ${totalTime}ms`)
-            console.log(`   Avg chunk size: ${chunkCount > 0 ? Math.round(totalChars / chunkCount) : 0} chars`)
-            break
-          }
-
-          const chunk = decoder.decode(value)
-          chunkCount++
-          totalChars += chunk.length
-          const timeSinceLastChunk = readStartTime - lastChunkTime
-
-          if (chunkCount <= 5 || chunkCount % 10 === 0) {
-            console.log(`📦 [STREAM-DEBUG] Chunk ${chunkCount}: ${chunk.length} chars, +${timeSinceLastChunk}ms desde último`)
-            if (chunkCount <= 2) {
-              console.log(`   Preview: "${chunk.substring(0, 100)}${chunk.length > 100 ? '...' : ''}"`)
-            }
-          }
-
-          lastChunkTime = readEndTime
-
-          // Accumulate in ref
-          const current = streamingRef.current.get(streamId) || ''
-          const newContent = current + chunk
-          streamingRef.current.set(streamId, newContent)
-
-          // Update state with new content
-          setMessages((prev) => {
-            if (assistantIndex < prev.length) {
-              const updated = [...prev]
-              updated[assistantIndex] = {
-                role: 'assistant',
-                content: newContent,
+              // After message completes, emit event to refresh conversations list
+              if (isFirstMessage) {
+                console.log('🔄 [HOOK] First message complete, triggering sidebar refresh...')
+                window.dispatchEvent(new CustomEvent('conversationTitleUpdated', { detail: { conversationId } }))
               }
-              return updated
+
+              resolve()
+              return
             }
-            return prev
-          })
-        }
-      } finally {
-        reader.releaseLock()
+
+            const data = JSON.parse(event.data)
+            if (data.content) {
+              const chunk = data.content
+              chunkCount++
+              totalChars += chunk.length
+
+              if (chunkCount <= 5 || chunkCount % 20 === 0) {
+                console.log(`📦 [SSE] Chunk ${chunkCount}: ${chunk.length} chars`)
+              }
+
+              // Accumulate in ref
+              const current = streamingRef.current.get(streamId) || ''
+              const newContent = current + chunk
+              streamingRef.current.set(streamId, newContent)
+
+              // Update state with new content
+              setMessages((prev) => {
+                if (assistantIndex < prev.length) {
+                  const updated = [...prev]
+                  updated[assistantIndex] = {
+                    role: 'assistant',
+                    content: newContent,
+                  }
+                  return updated
+                }
+                return prev
+              })
+            }
+          } catch (error) {
+            console.error('[SSE] Error parsing message:', error)
+          }
+        })
+
+        eventSource.addEventListener('error', (error: Event) => {
+          console.error('[SSE] Stream error:', error)
+          eventSource.close()
+          reject(new Error('SSE stream error'))
+        })
+      }).catch((err) => {
+        throw err
+      })
 
         // Final state update and cleanup
         const finalContent = streamingRef.current.get(streamId) || ''
