@@ -18,10 +18,9 @@ export function useAuth() {
     if (initCheckRef.current) return
     initCheckRef.current = true
 
-    // CRITICAL FIX: Immediately set loading = false to unblock UI
-    // Auth check happens in background (doesn't block rendering)
-    // This prevents infinite "Carregando..." on hard refresh in production
-    setLoading(false)
+    // CRITICAL: Keep loading = true until first auth check completes
+    // This prevents dashboard from redirecting back to login before we know the user is authenticated
+    // ONLY set loading = false when auth check finishes (either with user or without)
 
     // Setup BroadcastChannel para sync entre abas
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -92,7 +91,7 @@ export function useAuth() {
       }
     }
 
-    // Check auth em background (não bloqueia UI)
+    // Check auth - MUST complete before setting loading = false
     const checkAuth = async () => {
       try {
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()
@@ -100,6 +99,8 @@ export function useAuth() {
 
         if (sessionError || !authUser) {
           setUser(null)
+          console.log('[AUTH] No authenticated user found')
+          setLoading(false)  // CRITICAL: Set loading = false AFTER check completes
           return
         }
 
@@ -108,11 +109,13 @@ export function useAuth() {
           console.warn('🔐 [AUTH] Inactive user session, forcing logout')
           await supabase.auth.signOut()
           setUser(null)
+          setLoading(false)  // CRITICAL: Set loading = false AFTER check completes
           return
         }
 
         const userData = await loadUserData(authUser.id, authUser.email)
         setUser(userData)
+        setLoading(false)  // CRITICAL: Set loading = false AFTER user is set
 
         if (broadcastChannelRef.current) {
           try {
@@ -127,10 +130,11 @@ export function useAuth() {
       } catch (err) {
         console.error('[AUTH] Background auth check failed:', err)
         setUser(null)
+        setLoading(false)  // CRITICAL: Set loading = false AFTER check completes
       }
     }
 
-    // Start background auth check (doesn't wait for it)
+    // Start auth check (MUST complete before dashboard redirects)
     checkAuth()
 
     // Listen para mudanças de auth (login, logout, etc)
