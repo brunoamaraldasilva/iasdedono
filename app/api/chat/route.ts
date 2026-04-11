@@ -522,10 +522,14 @@ ${material.content}`
       },
     })
 
-    return new NextResponse(stream, {
+    // Use native Response instead of NextResponse to avoid Vercel buffering
+    // NextResponse can buffer ReadableStream, but Response sends chunks immediately
+    return new Response(stream, {
+      status: 200,
       headers: {
         'Content-Type': 'text/plain; charset=utf-8',
         'Transfer-Encoding': 'chunked',
+        'Cache-Control': 'no-cache, no-store, must-revalidate',
       },
     })
   } catch (error) {
