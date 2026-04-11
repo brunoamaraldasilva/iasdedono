@@ -90,7 +90,7 @@ export function useChat(conversationId: string) {
 
         setConversationTitle(conversation.title)
 
-        const loadedMessages = messagesData?.map((msg) => {
+        const loadedMessages = messagesData?.map((msg: any) => {
           const baseMessage: ChatMessage = {
             role: msg.role as 'user' | 'assistant',
             content: msg.content,
@@ -315,30 +315,6 @@ export function useChat(conversationId: string) {
       }).catch((err) => {
         throw err
       })
-
-        // Final state update and cleanup
-        const finalContent = streamingRef.current.get(streamId) || ''
-        streamingRef.current.delete(streamId)
-
-        setMessages((prev) => {
-          if (assistantIndex < prev.length) {
-            const updated = [...prev]
-            updated[assistantIndex] = {
-              role: 'assistant',
-              content: finalContent,
-            }
-            messagesRef.current = updated
-            return updated
-          }
-          return prev
-        })
-
-        // After message completes, emit event to refresh conversations list
-        if (isFirstMessage) {
-          console.log('🔄 [HOOK] First message complete, triggering sidebar refresh...')
-          window.dispatchEvent(new CustomEvent('conversationTitleUpdated', { detail: { conversationId } }))
-        }
-      }
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido'
       console.error('Error sending message:', errorMsg)

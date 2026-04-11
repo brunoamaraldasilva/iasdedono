@@ -144,7 +144,7 @@ export function useAuth() {
     checkAuth()
 
     // Listen para mudanças de auth (login, logout, etc)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       if (session?.user) {
         // ✅ Check user status before setting
         const isActive = await checkUserStatus(session.user.email)

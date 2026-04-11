@@ -40,8 +40,8 @@ export async function GET(request: NextRequest) {
     }
 
     // Rate limiting
-    const rateLimitResult = await rateLimit('chat', 10)
-    if (rateLimitResult.limited) {
+    const rateLimitResult = rateLimit('chat', 10)
+    if (!rateLimitResult.success) {
       return new Response('Rate limited', { status: 429 })
     }
 
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
           let systemPrompt = agent.system_prompt || 'Você é um assistente útil.'
 
           // Add business context if available
-          if (!isBeta && userId) {
+          if (userId) {
             const { data: context } = await supabase
               .from('business_contexts')
               .select('*')
@@ -158,8 +158,8 @@ export async function GET(request: NextRequest) {
           const totalTime = Date.now() - streamStartTime
           console.log(`✅ [CHAT-STREAM] SSE complete: ${fullResponse.length} chars in ${totalTime}ms`)
 
-          // Save message to DB after streaming completes (skip for beta)
-          if (!isBeta && userId) {
+          // Save message to DB after streaming completes
+          if (userId) {
             await supabase.from('messages').insert([
               {
                 conversation_id: conversationId,

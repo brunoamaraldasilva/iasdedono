@@ -43,7 +43,7 @@ export default function DashboardLayout({
       const { data: conversationsWithMessages } = await supabase
         .from('messages')
         .select('conversation_id', { count: 'exact' })
-        .eq('conversation_id', allConvs.map((c) => c.id)[0] || '')
+        .eq('conversation_id', allConvs.map((c: any) => c.id)[0] || '')
 
       // Get unique conversation IDs from messages table
       let conversationIdsWithMessages = new Set<string>()
@@ -55,25 +55,25 @@ export default function DashboardLayout({
         const { data: messageData } = await supabase
           .from('messages')
           .select('conversation_id')
-          .in('conversation_id', recentConvs.map((c) => c.id))
+          .in('conversation_id', recentConvs.map((c: any) => c.id))
 
         if (messageData) {
           conversationIdsWithMessages = new Set(
-            messageData.map((m) => m.conversation_id)
+            messageData.map((m: any) => m.conversation_id)
           )
         }
       }
 
       // Filter only conversations with messages and limit to 10
       const filteredConvs = allConvs
-        .filter((conv) => conversationIdsWithMessages.has(conv.id))
+        .filter((conv: any) => conversationIdsWithMessages.has(conv.id))
         .slice(0, 10)
-        .map((conv) => ({
+        .map((conv: any) => ({
           id: conv.id,
           title: conv.title,
         }))
 
-      console.log('💬 [SIDEBAR] Loaded conversations from DB:', filteredConvs.map(c => ({
+      console.log('💬 [SIDEBAR] Loaded conversations from DB:', filteredConvs.map((c: any) => ({
         id: c.id.slice(0, 8),
         title: c.title,
         hasChat: true

@@ -1,12 +1,9 @@
 import OpenAI from 'openai'
 
-const apiKey = process.env.OPENAI_API_KEY
+const apiKey = process.env.OPENAI_API_KEY || ''
 
-if (!apiKey) {
-  throw new Error('Missing OPENAI_API_KEY environment variable')
-}
-
-export const openai = new OpenAI({ apiKey })
+// Create OpenAI client only if API key is available
+export const openai = apiKey ? new OpenAI({ apiKey }) : (null as any as OpenAI)
 
 export async function generateChatResponse(
   systemPrompt: string,
