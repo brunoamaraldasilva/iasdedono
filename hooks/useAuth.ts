@@ -18,6 +18,11 @@ export function useAuth() {
     if (initCheckRef.current) return
     initCheckRef.current = true
 
+    // CRITICAL FIX: Immediately set loading = false to unblock UI
+    // Auth check happens in background (doesn't block rendering)
+    // This prevents infinite "Carregando..." on hard refresh in production
+    setLoading(false)
+
     // Setup BroadcastChannel para sync entre abas
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
       try {
@@ -32,14 +37,9 @@ export function useAuth() {
       }
     }
 
-    // CRITICAL: Timeout falback para evitar tela branca infinita em produção
-    // Se Supabase auth demorar >5s, força loading = false para não ficar preso
-    let timeoutId: NodeJS.Timeout | null = null
-    let authCompleted = false
-
     // Função para verificar se usuário está ativo (whitelist)
     const checkUserStatus = async (userEmail?: string): Promise<boolean> => {
-      if (!userEmail) return true // Se não tem email, não pode verificar
+      if (!userEmail) return true
 
       try {
         const { data: whitelistEntry } = await supabase
@@ -48,7 +48,6 @@ export function useAuth() {
           .eq('email', userEmail.toLowerCase())
           .maybeSingle()
 
-        // Se está inativo, retorna false (bloqueado)
         if (whitelistEntry?.status === 'inactive') {
           console.warn('🔐 [AUTH] User is inactive:', userEmail)
           return false
@@ -56,7 +55,7 @@ export function useAuth() {
         return true
       } catch (err) {
         console.error('[AUTH] Error checking user status:', err)
-        return true // Assume ativo em caso de erro
+        return true
       }
     }
 
@@ -71,7 +70,6 @@ export function useAuth() {
 
         if (dbError) {
           if (dbError.code === 'PGRST116') {
-            // Usuário não existe, criar perfil
             const { error: createError } = await supabase
               .from('users')
               .insert({
@@ -82,8 +80,6 @@ export function useAuth() {
               })
 
             if (createError) throw createError
-
-            // Recarregar dados criados
             return loadUserData(userId)
           }
           throw dbError
@@ -96,42 +92,28 @@ export function useAuth() {
       }
     }
 
-    // Check auth inicial
+    // Check auth em background (não bloqueia UI)
     const checkAuth = async () => {
-      authCompleted = false
       try {
-        // Use getSession() instead of getUser() to avoid Supabase auth lock race condition
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()
         const authUser = session?.user
 
         if (sessionError || !authUser) {
           setUser(null)
-          setLoading(false)
-          authCompleted = true
-          if (timeoutId) clearTimeout(timeoutId)
           return
         }
 
-        // ✅ Check if user is active (whitelist status)
         const isActive = await checkUserStatus(authUser.email)
         if (!isActive) {
           console.warn('🔐 [AUTH] Inactive user session, forcing logout')
           await supabase.auth.signOut()
           setUser(null)
-          setLoading(false)
-          authCompleted = true
-          if (timeoutId) clearTimeout(timeoutId)
           return
         }
 
-        // Carregar dados do usuário (passar email para evitar outra chamada a getUser)
         const userData = await loadUserData(authUser.id, authUser.email)
         setUser(userData)
-        setLoading(false)
-        authCompleted = true
-        if (timeoutId) clearTimeout(timeoutId)
 
-        // Broadcast para outras abas
         if (broadcastChannelRef.current) {
           try {
             broadcastChannelRef.current.postMessage({
@@ -143,33 +125,18 @@ export function useAuth() {
           }
         }
       } catch (err) {
-        console.error('Initial auth check failed:', err)
+        console.error('[AUTH] Background auth check failed:', err)
         setUser(null)
-        setLoading(false)
-        authCompleted = true
-        if (timeoutId) clearTimeout(timeoutId)
       }
     }
 
-    // CRITICAL: Set 15-second fallback timeout to prevent infinite loading screen in production
-    // Increased from 5s to 15s to allow legitimate async operations (getSession + DB queries)
-    // If Supabase calls genuinely hang, this ensures loading state gets cleared
-    timeoutId = setTimeout(() => {
-      if (!authCompleted) {
-        console.warn('⏱️  [AUTH] Timeout: Auth check took >15s, forcing loading state to false')
-        setUser(null)
-        setLoading(false)
-        authCompleted = true
-      }
-    }, 15000)
-
+    // Start background auth check (doesn't wait for it)
     checkAuth()
 
     // Listen para mudanças de auth (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       try {
         if (session?.user) {
-          // ✅ Check user status before setting
           const isActive = await checkUserStatus(session.user.email)
           if (!isActive) {
             console.warn('🔐 [AUTH] User became inactive, logging out')
@@ -178,7 +145,6 @@ export function useAuth() {
             return
           }
 
-          // Usuário logado
           const userData = await loadUserData(session.user.id, session.user.email)
           setUser(userData)
 
@@ -193,7 +159,6 @@ export function useAuth() {
             }
           }
         } else {
-          // Usuário fez logout
           setUser(null)
 
           if (broadcastChannelRef.current) {
@@ -215,7 +180,6 @@ export function useAuth() {
 
     // Cleanup
     return () => {
-      if (timeoutId) clearTimeout(timeoutId)
       subscription?.unsubscribe()
       try {
         broadcastChannelRef.current?.close()
