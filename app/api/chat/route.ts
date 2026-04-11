@@ -4,6 +4,7 @@ import { generateChatResponseWithTools, generateConversationTitle } from '@/lib/
 import { searchGoogle, formatResultsForPrompt } from '@/lib/serpapi'
 import { scrapeUrl, isValidUrl, extractUrls } from '@/lib/webscraper'
 import { rateLimit } from '@/lib/rateLimit'
+import { generateQueryHash, getCachedResponse, cacheResponse } from '@/lib/chatCache'
 
 // Server-side admin client for updating conversations
 function createAdminSupabaseClient() {
@@ -123,6 +124,23 @@ export async function POST(request: NextRequest) {
 
     // Create admin Supabase client for background title updates
     const adminSupabase = createAdminSupabaseClient()
+
+    // ✅ Check user status from whitelist (account deactivation support)
+    if (!isBeta && user?.email) {
+      const { data: whitelistEntry, error: whitelistError } = await supabase
+        .from('whitelist')
+        .select('status')
+        .eq('email', user.email.toLowerCase())
+        .maybeSingle()
+
+      if (whitelistEntry?.status === 'inactive') {
+        console.warn('🔐 [CHAT] Inactive user attempting to chat:', user.email)
+        return NextResponse.json(
+          { error: 'Sua conta está inativa. Entre em contato com o suporte.' },
+          { status: 403 }
+        )
+      }
+    }
 
     // Rate limit: 30 requests per minute per user (skip for beta)
     if (!isBeta) {
@@ -305,26 +323,34 @@ ${material.content}`
           }
 
           console.log('🌐 [CHAT] Agent calling web_scrape for:', url)
-          const scrapedContent = await scrapeUrl(url, selector)
+
+          // Wrap with timeout to prevent hanging stream
+          const scrapedContent = await Promise.race([
+            scrapeUrl(url, selector),
+            new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error('Web scrape timeout after 20s')), 20000)
+            )
+          ])
 
           console.log('✅ [CHAT] Successfully scraped:', url)
 
           // Retornar conteúdo para agent usar
           return `Scraped content from: ${scrapedContent.title || url}\n\n${scrapedContent.content}\n\nSource: ${url}\nScraped: ${scrapedContent.scrapedAt}`
         } catch (scrapeError) {
-          console.error('❌ [CHAT] Web scrape error:', scrapeError)
-          // Graceful fallback
-          return `Web scrape failed: ${scrapeError instanceof Error ? scrapeError.message : 'Unknown error'}. Please provide your response based on available information.`
+          console.error('❌ [CHAT] Web scrape error:', scrapeError instanceof Error ? scrapeError.message : scrapeError)
+          // Graceful fallback - IMPORTANT: Don't throw, let agent handle gracefully
+          const errorMsg = scrapeError instanceof Error ? scrapeError.message : 'Unknown error'
+          return `Web scrape temporarily unavailable (${errorMsg}). Please provide your response based on your knowledge or suggest alternative sources.`
         }
       }
       return 'Unknown tool'
     }
 
-    // Add document text if provided
+    // Add document text if provided (use summaries if available for optimization)
     if (documentIds && documentIds.length > 0) {
       console.log('📎 [CHAT] Loading documents for:', documentIds)
 
-      // Use admin client to read extracted_text (bypasses RLS)
+      // Use admin client to read documents (bypasses RLS)
       const adminSupabaseClient = createAdminSupabaseClient()
       const docClient = adminSupabaseClient || supabase
 
@@ -333,29 +359,35 @@ ${material.content}`
       } else {
         const { data: docs } = await docClient
           .from('documents')
-          .select('id, filename, extracted_text')
+          .select('id, filename, extracted_text, summary, summary_tokens, summary_status')
           .in('id', documentIds)
 
         if (docs && docs.length > 0) {
           console.log('📄 [CHAT] Document details:', docs.map(d => ({
             id: d.id,
             filename: d.filename,
-            textLength: d.extracted_text?.length || 0,
-            hasText: !!d.extracted_text
+            hasSummary: !!d.summary,
+            summaryTokens: d.summary_tokens || 0,
+            originalLength: d.extracted_text?.length || 0,
           })))
 
           systemPrompt += `
 
 ## Documentos Anexados à Conversa:`
           docs.forEach((doc) => {
-            if (doc.extracted_text) {
+            // Use summary if available (90% token reduction), fallback to extracted_text
+            const useContent = doc.summary && doc.summary_status === 'completed' ? doc.summary : doc.extracted_text
+            const contentType = doc.summary && doc.summary_status === 'completed' ? 'resumo' : 'texto completo'
+
+            if (useContent) {
               systemPrompt += `
 
-### ${doc.filename}
-${doc.extracted_text}`
-              console.log(`✅ [CHAT] Added text from ${doc.filename} (${doc.extracted_text.length} chars)`)
+### ${doc.filename} (${contentType})`
+              systemPrompt += useContent.length > 500 ? useContent.substring(0, 500) : useContent
+              const reduction = doc.summary ? ((1 - (doc.summary_tokens || 0) / (doc.extracted_text?.length || 1) / 0.004) * 100).toFixed(0) : 0
+              console.log(`✅ [CHAT] Added ${contentType} from ${doc.filename} (reduction: ${reduction}%)`)
             } else {
-              console.warn(`⚠️ [CHAT] Document ${doc.filename} has no extracted_text!`)
+              console.warn(`⚠️ [CHAT] Document ${doc.filename} has no content!`)
             }
           })
           console.log('✅ [CHAT] Added', docs.length, 'documents to context')
@@ -373,6 +405,24 @@ ${doc.extracted_text}`
       role: 'user' as const,
       content: message,
     })
+
+    // Generate cache key for this query (only for authenticated users, not beta)
+    const queryHash = !isBeta ? generateQueryHash(message, conversationId, agentId) : ''
+    let cachedResponse: string | null = null
+
+    // Try to get cached response (skip for beta)
+    if (!isBeta && queryHash) {
+      cachedResponse = await getCachedResponse(queryHash)
+      if (cachedResponse) {
+        console.log(`⚡ [CHAT] Returning cached response immediately`)
+        return NextResponse.json({
+          success: true,
+          response: cachedResponse,
+          cached: true,
+          cacheHit: true,
+        })
+      }
+    }
 
     // Create streaming response
     const encoder = new TextEncoder()
@@ -413,6 +463,21 @@ ${doc.extracted_text}`
 
             if (insertAssistantError) {
               console.error('Failed to save assistant message')
+            }
+
+            // Cache the response for future identical queries
+            if (queryHash && fullResponse && userId) {
+              await cacheResponse(
+                queryHash,
+                message,
+                fullResponse,
+                conversationId,
+                userId,
+                24 // TTL: 24 hours
+              ).catch(err => {
+                console.error('Failed to cache response:', err)
+                // Don't break response flow if caching fails
+              })
             }
           }
 

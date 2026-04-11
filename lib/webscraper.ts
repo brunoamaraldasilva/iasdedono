@@ -34,16 +34,39 @@ export async function scrapeUrl(url: string, selector?: string): Promise<Scraped
       throw new Error('Domain ' + urlObj.hostname + ' is blocked for scraping')
     }
 
-    // HTTP request com timeout
-    const response = await axios.get(url, {
-      timeout: 10000,
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (compatible; C-Lvls-Bot/1.0 +https://seu-site.com)',
-        'Accept-Language': 'pt-BR,pt;q=0.9',
-      },
-      maxContentLength: 10 * 1024 * 1024, // 10MB max
-    })
+    // HTTP request com timeout maior + retry logic
+    let response
+    let lastError: Error | null = null
+    const maxRetries = 2
+
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      try {
+        response = await axios.get(url, {
+          timeout: 15000, // 15s instead of 10s
+          headers: {
+            'User-Agent':
+              'Mozilla/5.0 (compatible; C-Lvls-Bot/1.0 +https://seu-site.com)',
+            'Accept-Language': 'pt-BR,pt;q=0.9',
+          },
+          maxContentLength: 10 * 1024 * 1024, // 10MB max
+          // Prevent hanging on slow connections
+          timeoutErrorMessage: `Request timeout after 15s for ${url}`,
+        })
+        break // Success - exit retry loop
+      } catch (error) {
+        lastError = error as Error
+        if (attempt < maxRetries && error instanceof Error && error.message.includes('timeout')) {
+          console.warn(`🔄 [SCRAPE] Attempt ${attempt + 1} timed out, retrying...`)
+          await new Promise(r => setTimeout(r, 500 * (attempt + 1))) // Exponential backoff
+        } else {
+          throw error // Don't retry if not a timeout
+        }
+      }
+    }
+
+    if (!response) {
+      throw lastError || new Error('Failed to scrape after retries')
+    }
 
     const $ = cheerio.load(response.data)
 

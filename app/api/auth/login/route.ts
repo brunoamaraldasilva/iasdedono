@@ -15,11 +15,11 @@ export async function POST(request: NextRequest) {
 
     const supabase = createServerSupabaseClient()
 
-    // ✅ NEW: Check whitelist BEFORE login attempt
+    // ✅ Check whitelist BEFORE login attempt (single source of truth)
     console.log('🔐 [LOGIN-WHITELIST] Checking status for:', email)
 
     const { data: whitelistEntry, error: whitelistError } = await supabase
-      .from('authorized_users')
+      .from('whitelist')
       .select('email, status')
       .eq('email', email.toLowerCase())
       .maybeSingle()
