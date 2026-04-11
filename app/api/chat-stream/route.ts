@@ -150,11 +150,20 @@ export async function GET(request: NextRequest) {
           // Generate response with streaming
           console.log(`🎯 [CHAT-STREAM] Starting chat with Tool Calling support...`)
 
+          let chunkCount = 0
+          let enqueuedWithoutDelay = 0
+          const enqueuedTimes: number[] = []
+
           for await (const chunk of generateChatResponseWithTools(systemPrompt, chatMessages)) {
             fullResponse += chunk
+            chunkCount++
 
             // Send chunk via SSE
             const sseChunk = `data: ${JSON.stringify({ content: chunk })}\n\n`
+            const enqueuedAt = Date.now()
+            enqueuedTimes.push(enqueuedAt)
+            enqueuedWithoutDelay++
+
             controller.enqueue(encoder.encode(sseChunk))
 
             if (!firstChunkSent) {
@@ -162,7 +171,14 @@ export async function GET(request: NextRequest) {
               console.log(`⏱️  [CHAT-STREAM] FIRST CHUNK sent after ${firstChunkLatency}ms`)
               firstChunkSent = true
             }
+
+            if (chunkCount % 50 === 0) {
+              console.log(`📊 [CHAT-STREAM] Enqueued ${chunkCount} chunks without delays (potential TCP bundling)`)
+            }
           }
+
+          console.log(`📊 [CHAT-STREAM] CRITICAL: Enqueued ${enqueuedWithoutDelay} chunks back-to-back without delays`)
+          console.log(`   This causes OS TCP layer to bundle multiple SSE messages into single packets`)
 
           // Send completion marker
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
