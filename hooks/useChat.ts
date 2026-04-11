@@ -23,9 +23,14 @@ export function useChat(conversationId: string) {
   // Initialize message channel for breaking React batching
   useEffect(() => {
     messageChannelRef.current = new MessageChannel()
+    let renderCallCount = 0
     messageChannelRef.current.port2.onmessage = () => {
+      renderCallCount++
       const render = renderQueueRef.current.shift()
-      if (render) render()
+      if (render) {
+        console.log(`📤 [MessageChannel] Port2 onmessage #${renderCallCount}: executing render (queue size: ${renderQueueRef.current.length})`)
+        render()
+      }
     }
   }, [])
 
@@ -261,10 +266,16 @@ export function useChat(conversationId: string) {
         let chunkCount = 0
         let totalChars = 0
         let firstChunkReceived = false
+        const chunkTimestamps: number[] = []
+        const eventSourceStartTime = Date.now()
 
         eventSource.addEventListener('message', (event: MessageEvent) => {
+          const chunkArrivalTime = Date.now() - eventSourceStartTime
+          chunkTimestamps.push(chunkArrivalTime)
           try {
             console.log(`[PHASE 3] EventSource message received:`, {
+              chunkNumber: chunkCount + 1,
+              arrivalTimeMs: chunkArrivalTime,
               dataLength: event.data.length,
               isComplete: event.data === 'data: [DONE]' || event.data === '[DONE]',
               preview: event.data.substring(0, 50)
@@ -277,6 +288,25 @@ export function useChat(conversationId: string) {
               console.log(`   Total chars: ${totalChars}`)
               console.log(`   Total time: ${totalTime}ms`)
 
+              // CRITICAL DIAGNOSTIC: Were chunks spread out or bunched?
+              if (chunkTimestamps.length > 2) {
+                const timingGaps = []
+                for (let i = 1; i < chunkTimestamps.length; i++) {
+                  timingGaps.push(chunkTimestamps[i] - chunkTimestamps[i - 1])
+                }
+                const avgGap = timingGaps.reduce((a, b) => a + b) / timingGaps.length
+                const maxGap = Math.max(...timingGaps)
+                const minGap = Math.min(...timingGaps)
+                console.log(`⏱️  [TIMING ANALYSIS] Chunk arrival spacing:`)
+                console.log(`   Min gap: ${minGap}ms, Max gap: ${maxGap}ms, Avg gap: ${avgGap.toFixed(1)}ms`)
+                console.log(`   All gaps: ${timingGaps.slice(0, 10).map(g => g + 'ms').join(', ')}${timingGaps.length > 10 ? '...' : ''}`)
+                if (maxGap > 500) {
+                  console.log(`   ⚠️ CHUNKING: Chunks arriving in batches (gap > 500ms)`)
+                } else if (maxGap < 10) {
+                  console.log(`   ⚠️ BUFFERING: All chunks arrived almost simultaneously (max gap ${maxGap}ms)`)
+                }
+              }
+
               // Get final accumulated content
               const finalContent = streamingRef.current.get(streamId) || ''
               console.log(`📋 [PHASE 4] Final accumulated content:`, {
@@ -284,6 +314,13 @@ export function useChat(conversationId: string) {
                 contentLength: finalContent.length,
                 preview: finalContent.substring(0, 150)
               })
+
+              // CRITICAL: Was MessageChannel working?
+              console.log(`📊 [RENDER QUEUE ANALYSIS]`)
+              console.log(`   Render queue size when stream ended: ${renderQueueRef.current.length}`)
+              console.log(`   (If > 0: renders are still queued but not processing!)`)
+              console.log(`   MessageChannel available: ${!!messageChannelRef.current}`)
+              console.log(`   Port2 ready: ${!!messageChannelRef.current?.port2}`)
 
               // Final state update with complete content
               if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
@@ -359,9 +396,14 @@ export function useChat(conversationId: string) {
                   // MessageChannel posts to a different macrotask queue, preventing batching
                   // Each update gets its own message in the port, forcing immediate renders
                   if (messageChannelRef.current) {
-                    renderQueueRef.current.push(() => setMessages(updated))
+                    renderQueueRef.current.push(() => {
+                      console.log(`🎨 [Render] Executing queued render for chunk ${chunkCount}`)
+                      setMessages(updated)
+                    })
+                    console.log(`📬 [MessageChannel] Port1 postMessage for chunk ${chunkCount} (queue size before: ${renderQueueRef.current.length})`)
                     messageChannelRef.current.port1.postMessage(null)
                   } else {
+                    console.log(`⚠️ [Render] MessageChannel not available, direct setMessages for chunk ${chunkCount}`)
                     setMessages(updated)
                   }
                 }
