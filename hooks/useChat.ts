@@ -16,6 +16,7 @@ export function useChat(conversationId: string) {
   const messagesRef = useRef<ChatMessage[]>([])
   const streamingRef = useRef<Map<string, string>>(new Map())
   const isMountedRef = useRef(true)
+  const assistantIndexRef = useRef<number>(-1)
 
   // Load conversation and agent on mount
   useEffect(() => {
@@ -228,7 +229,7 @@ export function useChat(conversationId: string) {
       setLoading(true)
       streamingRef.current.set(streamId, '')
 
-      let assistantIndex = -1  // Will be set when first chunk arrives
+      assistantIndexRef.current = -1  // Will be set when first chunk arrives
 
       // Use Server-Sent Events for streaming
       const sseStartTime = Date.now()
@@ -275,14 +276,14 @@ export function useChat(conversationId: string) {
 
               // Final state update with complete content
               setMessages((prev) => {
-                if (assistantIndex >= 0 && assistantIndex < prev.length) {
+                if (assistantIndexRef.current >= 0 && assistantIndexRef.current < prev.length) {
                   const updated = [...prev]
-                  updated[assistantIndex] = {
+                  updated[assistantIndexRef.current] = {
                     role: 'assistant',
                     content: finalContent,
                   }
                   console.log(`✅ [PHASE 4] Final state update applied:`, {
-                    assistantIndex,
+                    assistantIndex: assistantIndexRef.current,
                     contentLength: finalContent.length
                   })
                   messagesRef.current = updated
@@ -325,7 +326,7 @@ export function useChat(conversationId: string) {
                     content: chunk,
                   }
                   const updated = [...prev, assistantMessage]
-                  assistantIndex = updated.length - 1
+                  assistantIndexRef.current = updated.length - 1
                   messagesRef.current = updated
                   return updated
                 })
@@ -340,9 +341,9 @@ export function useChat(conversationId: string) {
 
                 // Update state with accumulated content
                 setMessages((prev) => {
-                  if (assistantIndex >= 0 && assistantIndex < prev.length) {
+                  if (assistantIndexRef.current >= 0 && assistantIndexRef.current < prev.length) {
                     const updated = [...prev]
-                    updated[assistantIndex] = {
+                    updated[assistantIndexRef.current] = {
                       role: 'assistant',
                       content: newContent,
                     }
