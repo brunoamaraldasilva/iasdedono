@@ -38,6 +38,16 @@ export function ChatWindow({
       lastMessageLength: messages[messages.length - 1]?.content?.length || 0,
       preview: messages[messages.length - 1]?.content?.substring(0, 80)
     })
+
+    // DEBUG: Log what will actually render
+    if (messages.length > 0) {
+      console.log(`[DEBUG] Messages array content:`, messages.map((msg, idx) => ({
+        index: idx,
+        role: msg.role,
+        contentLength: msg.content?.length,
+        firstChars: msg.content?.substring(0, 30)
+      })))
+    }
   }, [messages, loading, isLoadingMessages])
 
   const scrollToBottom = () => {
@@ -122,7 +132,14 @@ export function ChatWindow({
           </div>
         ) : (
           <>
-            {messages.map((msg, index) => (
+            {console.log(`[DEBUG RENDER] Rendering ${messages.length} messages`)}
+            {messages.map((msg, index) => {
+              console.log(`[DEBUG RENDER] Message ${index}:`, {
+                role: msg.role,
+                contentLength: msg.content?.length,
+                hasContent: !!msg.content && msg.content.length > 0
+              })
+              return (
               <div
                 key={`${msg.role}-${index}-${msg.created_at || 'timestamp'}`}
                 className={`flex ${
@@ -247,7 +264,8 @@ export function ChatWindow({
                   )}
                 </div>
               </div>
-            ))}
+              )
+            })}
             {loading && (
               <div className="flex justify-start">
                 <div className="text-gray-100 px-4 py-2 rounded-lg rounded-bl-none" style={{ backgroundColor: '#161616' }}>
