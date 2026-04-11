@@ -443,11 +443,18 @@ ${material.content}`
         try {
           // Generate streamed response with tools
           console.log('🎯 [CHAT] Starting chat with Tool Calling support...')
+          let chunkCount = 0
           for await (const chunk of generateChatResponseWithTools(systemPrompt, chatMessages, handleToolCall)) {
             fullResponse += chunk
             // Send chunk to client
             controller.enqueue(encoder.encode(chunk))
+            chunkCount++
+            // Log every 10 chunks to verify streaming is happening
+            if (chunkCount % 10 === 0) {
+              console.log(`📤 [CHAT] Streamed ${chunkCount} chunks (${fullResponse.length} chars total)`)
+            }
           }
+          console.log(`✅ [CHAT] Streaming complete: ${chunkCount} total chunks, ${fullResponse.length} chars`)
 
           // Save assistant message to DB after streaming completes (skip for beta)
           if (!isBeta) {

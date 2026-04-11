@@ -249,10 +249,10 @@ export function useChat(conversationId: string) {
         throw new Error(errorMessage)
       }
 
-      // Add assistant message placeholder
+      // Add assistant message placeholder with loading indicator
       const assistantMessage: ChatMessage = {
         role: 'assistant',
-        content: '',
+        content: '🔄 Processando sua pergunta...',
       }
 
       const messagesWithAssistant = [...messagesRef.current, assistantMessage]
