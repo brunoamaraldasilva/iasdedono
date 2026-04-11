@@ -343,7 +343,12 @@ export function useChat(conversationId: string) {
                     content: newContent,
                   }
                   messagesRef.current = updated
-                  setMessages(updated)
+
+                  // Break React batching with setTimeout(0) to force intermediate renders
+                  // This prevents all setMessages calls from being batched into one final render
+                  setTimeout(() => {
+                    setMessages(updated)
+                  }, 0)
                 }
               }
 
