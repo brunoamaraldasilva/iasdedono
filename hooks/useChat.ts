@@ -252,6 +252,8 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
         let chunkCount = 0
         let totalChars = 0
         let firstChunkReceived = false
+        let renderUpdateCounter = 0
+        const RENDER_UPDATE_INTERVAL = 10 // Update UI every 10 chunks
 
         eventSource.addEventListener('message', (event: MessageEvent) => {
           try {
@@ -274,7 +276,7 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
               // Update messagesRef with final content for DB persistence
               if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
                 messagesRef.current[assistantIndexRef.current].content = finalContent
-                // Also update React state with final content so ReactMarkdown can render it
+                // Final update to React state
                 const updatedMessages = [...messagesRef.current]
                 setMessages(updatedMessages)
               }
@@ -303,30 +305,38 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
                 firstChunkReceived = true
                 console.log(`📥 [SSE] First chunk received, creating assistant message balloon`)
 
-                // Create the assistant message ONCE in state
+                // Create the assistant message with first chunk
                 const assistantMessage: ChatMessage = {
                   role: 'assistant',
-                  content: '', // Start with empty, will update DOM directly
+                  content: chunk, // Start with first chunk immediately
                 }
                 const updated = [...messagesRef.current, assistantMessage]
                 messagesRef.current = updated
                 assistantIndexRef.current = updated.length - 1
 
                 setLoading(false)
-                setMessages(updated)  // Only render once!
+                setMessages(updated)
 
-                // Store first chunk in ref for accumulation
+                // Store first chunk in ref
                 streamingRef.current.set(streamId, chunk)
+                renderUpdateCounter = 1
               } else {
                 // Accumulate chunks in ref
                 const current = streamingRef.current.get(streamId) || ''
                 const newContent = current + chunk
                 streamingRef.current.set(streamId, newContent)
 
-                // UPDATE DOM DIRECTLY - no React state updates!
-                // Find the content element by data attribute and update textContent
-                if (contentElementRef.current) {
-                  contentElementRef.current.textContent = newContent
+                // Update React state periodically (every N chunks) to show streaming progress
+                renderUpdateCounter++
+                if (renderUpdateCounter % RENDER_UPDATE_INTERVAL === 0) {
+                  const updated = [...messagesRef.current]
+                  updated[assistantIndexRef.current].content = newContent
+                  messagesRef.current = updated
+
+                  // Use setTimeout to break out of event listener batching
+                  setTimeout(() => {
+                    setMessages([...updated])
+                  }, 0)
                 }
               }
 
