@@ -39,13 +39,17 @@ export async function getCachedResponse(queryHash: string): Promise<string | nul
       return null
     }
 
-    // Increment hit count for analytics (silent fail - don't block response)
-    supabase
-      .from('chat_response_cache')
-      .update({ hit_count: data.hit_count + 1 })
-      .eq('query_hash', queryHash)
-      .then(() => {})
-      .catch(() => {}) // Silent fail - cache updates don't block response
+    // Increment hit count for analytics (fire-and-forget, silent fail - don't block response)
+    ;(async () => {
+      try {
+        await supabase
+          .from('chat_response_cache')
+          .update({ hit_count: data.hit_count + 1 })
+          .eq('query_hash', queryHash)
+      } catch (err) {
+        // Silent fail - cache updates don't block response
+      }
+    })()
 
     console.log(
       `✅ [CACHE-HIT] Response cache hit (total hits: ${data.hit_count + 1})`

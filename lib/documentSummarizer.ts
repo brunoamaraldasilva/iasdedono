@@ -5,11 +5,11 @@
  */
 
 import OpenAI from 'openai'
-import { encoding_for_model } from 'js-tiktoken'
+import { encodingForModel } from 'js-tiktoken'
 import { createServerSupabaseClient } from '@/lib/supabase'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-const enc = encoding_for_model('gpt-4o-mini')
+const enc = encodingForModel('gpt-4o-mini')
 
 /**
  * Summarize a document to approximately 200 tokens
