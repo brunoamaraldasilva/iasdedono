@@ -151,16 +151,17 @@ export function useAuth() {
       }
     }
 
-    // CRITICAL: Set 5-second fallback timeout to prevent infinite loading screen in production
-    // If Supabase calls hang, this ensures loading state gets cleared
+    // CRITICAL: Set 15-second fallback timeout to prevent infinite loading screen in production
+    // Increased from 5s to 15s to allow legitimate async operations (getSession + DB queries)
+    // If Supabase calls genuinely hang, this ensures loading state gets cleared
     timeoutId = setTimeout(() => {
       if (!authCompleted) {
-        console.warn('⏱️  [AUTH] Timeout: Auth check took >5s, forcing loading state to false')
+        console.warn('⏱️  [AUTH] Timeout: Auth check took >15s, forcing loading state to false')
         setUser(null)
         setLoading(false)
         authCompleted = true
       }
-    }, 5000)
+    }, 15000)
 
     checkAuth()
 
