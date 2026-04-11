@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import { supabase } from '@/lib/supabase'
 
@@ -16,6 +16,7 @@ function checkPasswordStrength(password: string) {
 
 export default function LoginPage() {
   const router = useRouter()
+  const initCheckRef = useRef(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordConfirm, setPasswordConfirm] = useState('')
@@ -37,6 +38,10 @@ export default function LoginPage() {
 
   // Check if already logged in and redirect
   useEffect(() => {
+    // Prevent multiple executions (CRITICAL: router dependency causes loop)
+    if (initCheckRef.current) return
+    initCheckRef.current = true
+
     let isMounted = true
     let checkCompleted = false
     let timeoutId: NodeJS.Timeout | null = null
@@ -72,7 +77,7 @@ export default function LoginPage() {
       isMounted = false
       if (timeoutId) clearTimeout(timeoutId)
     }
-  }, [router])
+  }, [])
 
   // Check password match and strength in real-time
   useEffect(() => {
