@@ -12,6 +12,7 @@ interface ChatWindowProps {
   loading: boolean
   isLoadingMessages?: boolean
   agentName?: string
+  onContentElementRef?: (ref: HTMLDivElement | null) => void
 }
 
 interface SourceData {
@@ -24,8 +25,10 @@ export function ChatWindow({
   loading,
   isLoadingMessages = false,
   agentName = 'Assistant',
+  onContentElementRef,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
+  const contentElementRef = useRef<HTMLDivElement | null>(null)
   const [messageSources, setMessageSources] = useState<Map<number, SourceData[]>>(new Map())
 
   // Log whenever messages prop changes
@@ -156,7 +159,15 @@ export function ChatWindow({
                 >
                   {msg.role === 'assistant' ? (
                     <div>
-                      <div className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none">
+                      <div
+                        ref={(el) => {
+                          if (el && index === messages.length - 1) {
+                            contentElementRef.current = el
+                            onContentElementRef?.(el)
+                          }
+                        }}
+                        className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none"
+                      >
                         <ReactMarkdown
                           remarkPlugins={[remarkGfm]}
                           children={getMessageContentWithoutSources(msg.content)}

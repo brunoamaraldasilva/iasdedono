@@ -5,7 +5,7 @@ import { supabase } from '@/lib/supabase'
 import type { Agent } from '@/types/agent'
 import type { ChatMessage } from '@/types/chat'
 
-export function useChat(conversationId: string) {
+export function useChat(conversationId: string, onContentElementRef?: (ref: HTMLDivElement | null) => void) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [agent, setAgent] = useState<Agent | null>(null)
   const [conversationTitle, setConversationTitle] = useState<string>('')
@@ -17,8 +17,7 @@ export function useChat(conversationId: string) {
   const streamingRef = useRef<Map<string, string>>(new Map())
   const isMountedRef = useRef(true)
   const assistantIndexRef = useRef<number>(-1)
-  const rafRef = useRef<number | null>(null)
-  const pendingUpdateRef = useRef(false)
+  const contentElementRef = useRef<HTMLDivElement | null>(null)
 
 
   // Load conversation and agent on mount
@@ -165,10 +164,6 @@ export function useChat(conversationId: string) {
         subscriptionRef.current.unsubscribe()
         subscriptionRef.current = null
       }
-      if (rafRef.current) {
-        cancelAnimationFrame(rafRef.current)
-        rafRef.current = null
-      }
     }
   }, [conversationId])
 
@@ -275,35 +270,17 @@ export function useChat(conversationId: string) {
 
               // Get final accumulated content
               const finalContent = streamingRef.current.get(streamId) || ''
-              console.log(`📋 [PHASE 4] Final accumulated content:`, {
-                streamId,
-                contentLength: finalContent.length,
-                preview: finalContent.substring(0, 150)
-              })
 
-              // Final state update with complete content
+              // Update messagesRef with final content for DB persistence
               if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
-                const updated = [...messagesRef.current]
-                updated[assistantIndexRef.current] = {
-                  role: 'assistant',
-                  content: finalContent,
-                }
-                console.log(`✅ [PHASE 4] Final state update applied:`, {
-                  assistantIndex: assistantIndexRef.current,
-                  contentLength: finalContent.length
-                })
-                messagesRef.current = updated
-                setMessages(updated)
+                messagesRef.current[assistantIndexRef.current].content = finalContent
+                // Also update React state with final content so ReactMarkdown can render it
+                const updatedMessages = [...messagesRef.current]
+                setMessages(updatedMessages)
               }
 
               setLoading(false)
               eventSource.close()
-
-              // Clean up any pending RAF
-              if (rafRef.current) {
-                cancelAnimationFrame(rafRef.current)
-                rafRef.current = null
-              }
 
               // After message completes, emit event to refresh conversations list
               if (isFirstMessage) {
@@ -321,55 +298,35 @@ export function useChat(conversationId: string) {
               chunkCount++
               totalChars += chunk.length
 
-              // CREATE BALLOON ON FIRST CHUNK
+              // CREATE BALLOON ON FIRST CHUNK (render once)
               if (!firstChunkReceived) {
                 firstChunkReceived = true
                 console.log(`📥 [SSE] First chunk received, creating assistant message balloon`)
 
-                // FIX: Don't rely on setMessages callback timing (causes batching issues in production)
-                // Instead, directly update messagesRef BEFORE calling setMessages
+                // Create the assistant message ONCE in state
                 const assistantMessage: ChatMessage = {
                   role: 'assistant',
-                  content: chunk,
+                  content: '', // Start with empty, will update DOM directly
                 }
                 const updated = [...messagesRef.current, assistantMessage]
                 messagesRef.current = updated
                 assistantIndexRef.current = updated.length - 1
 
                 setLoading(false)
-                setMessages(updated)  // Force re-render with known good state
+                setMessages(updated)  // Only render once!
 
-                // Accumulate the first chunk
+                // Store first chunk in ref for accumulation
                 streamingRef.current.set(streamId, chunk)
               } else {
-                // Accumulate in ref for subsequent chunks
+                // Accumulate chunks in ref
                 const current = streamingRef.current.get(streamId) || ''
                 const newContent = current + chunk
                 streamingRef.current.set(streamId, newContent)
 
-                // Update state with accumulated content
-                // Use KNOWN assistantIndex from ref, not from callback
-                if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
-                  const updated = [...messagesRef.current]
-                  updated[assistantIndexRef.current] = {
-                    role: 'assistant',
-                    content: newContent,
-                  }
-                  messagesRef.current = updated
-
-                  // FIX: Use requestAnimationFrame to batch updates to screen refresh rate
-                  // Instead of rendering per chunk (227 renders = freeze),
-                  // batch chunks until next frame (60fps = 16ms interval)
-                  // Schedule RAF if not already pending
-                  if (!pendingUpdateRef.current) {
-                    pendingUpdateRef.current = true
-                    rafRef.current = requestAnimationFrame(() => {
-                      pendingUpdateRef.current = false
-                      setMessages([...messagesRef.current])
-                    })
-                  }
-                } else {
-                  console.warn(`[DIAGNOSTIC] Invalid assistantIndex: ${assistantIndexRef.current}, messagesRef.length: ${messagesRef.current.length}`)
+                // UPDATE DOM DIRECTLY - no React state updates!
+                // Find the content element by data attribute and update textContent
+                if (contentElementRef.current) {
+                  contentElementRef.current.textContent = newContent
                 }
               }
 
