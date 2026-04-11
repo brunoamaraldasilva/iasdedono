@@ -32,13 +32,32 @@ export function useAuth() {
       }
     }
 
-    // Timeout apenas para ESCONDER o loading visual, não para interromper autenticação
-    const timeoutId = setTimeout(() => {
-      if (loading) {
-        console.warn('⚠️ [AUTH] Autenticação demorando, escondendo spinner...')
-        setLoading(false) // Just hide spinner, auth continua em background
+    // Timeout para dar feedback se auth demorar muito (3s é bom para UX)
+    // Mas NÃO vai fazer setLoading(false) prematuramente
+    let timeoutId: NodeJS.Timeout | null = null
+
+    // Função para verificar se usuário está ativo (whitelist)
+    const checkUserStatus = async (userEmail?: string): Promise<boolean> => {
+      if (!userEmail) return true // Se não tem email, não pode verificar
+
+      try {
+        const { data: whitelistEntry } = await supabase
+          .from('whitelist')
+          .select('status')
+          .eq('email', userEmail.toLowerCase())
+          .maybeSingle()
+
+        // Se está inativo, retorna false (bloqueado)
+        if (whitelistEntry?.status === 'inactive') {
+          console.warn('🔐 [AUTH] User is inactive:', userEmail)
+          return false
+        }
+        return true
+      } catch (err) {
+        console.error('[AUTH] Error checking user status:', err)
+        return true // Assume ativo em caso de erro
       }
-    }, 12000) // 12 segundos
+    }
 
     // Função simples para carregar dados do usuário
     const loadUserData = async (userId: string, userEmail?: string) => {
@@ -89,6 +108,16 @@ export function useAuth() {
           return
         }
 
+        // ✅ Check if user is active (whitelist status)
+        const isActive = await checkUserStatus(authUser.email)
+        if (!isActive) {
+          console.warn('🔐 [AUTH] Inactive user session, forcing logout')
+          await supabase.auth.signOut()
+          setUser(null)
+          setLoading(false)
+          return
+        }
+
         // Carregar dados do usuário (passar email para evitar outra chamada a getUser)
         const userData = await loadUserData(authUser.id, authUser.email)
         setUser(userData)
@@ -117,6 +146,15 @@ export function useAuth() {
     // Listen para mudanças de auth (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (session?.user) {
+        // ✅ Check user status before setting
+        const isActive = await checkUserStatus(session.user.email)
+        if (!isActive) {
+          console.warn('🔐 [AUTH] User became inactive, logging out')
+          await supabase.auth.signOut()
+          setUser(null)
+          return
+        }
+
         // Usuário logado
         const userData = await loadUserData(session.user.id, session.user.email)
         setUser(userData)
@@ -150,7 +188,7 @@ export function useAuth() {
 
     // Cleanup
     return () => {
-      clearTimeout(timeoutId)
+      if (timeoutId) clearTimeout(timeoutId)
       subscription?.unsubscribe()
       try {
         broadcastChannelRef.current?.close()
