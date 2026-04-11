@@ -17,17 +17,7 @@ export function useChat(conversationId: string) {
   const streamingRef = useRef<Map<string, string>>(new Map())
   const isMountedRef = useRef(true)
   const assistantIndexRef = useRef<number>(-1)
-  const messageChannelRef = useRef<MessageChannel | null>(null)
-  const renderQueueRef = useRef<Array<() => void>>([])
 
-  // Initialize message channel for breaking React batching
-  useEffect(() => {
-    messageChannelRef.current = new MessageChannel()
-    messageChannelRef.current.port2.onmessage = () => {
-      const render = renderQueueRef.current.shift()
-      if (render) render()
-    }
-  }, [])
 
   // Load conversation and agent on mount
   useEffect(() => {
@@ -355,15 +345,12 @@ export function useChat(conversationId: string) {
                   }
                   messagesRef.current = updated
 
-                  // Break React batching with MessageChannel
-                  // MessageChannel posts to a different macrotask queue, preventing batching
-                  // Each update gets its own message in the port, forcing immediate renders
-                  if (messageChannelRef.current) {
-                    renderQueueRef.current.push(() => setMessages(updated))
-                    messageChannelRef.current.port1.postMessage(null)
-                  } else {
+                  // FIX: Use setTimeout(0) to force macrotask, not microtask
+                  // MessageChannel still uses microtasks which React 18 batches
+                  // setTimeout creates separate macrotask = separate React batch
+                  setTimeout(() => {
                     setMessages(updated)
-                  }
+                  }, 0)
                 }
               }
 
