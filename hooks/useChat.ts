@@ -223,6 +223,13 @@ export function useChat(conversationId: string) {
       }
 
       // Call chat API with streaming
+      const fetchStartTime = Date.now()
+      console.log(`🚀 [STREAM-DEBUG] Iniciando fetch para /api/chat`)
+      console.log(`   Token: ${accessToken.substring(0, 20)}...`)
+      console.log(`   Conversation: ${conversationId}`)
+      console.log(`   Agent: ${agent.id}`)
+      console.log(`   Message: "${content.substring(0, 50)}${content.length > 50 ? '...' : ''}"`)
+
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
@@ -238,6 +245,13 @@ export function useChat(conversationId: string) {
         }),
       })
 
+      const fetchEndTime = Date.now()
+      console.log(`📡 [STREAM-DEBUG] Response recebida após ${fetchEndTime - fetchStartTime}ms`)
+      console.log(`   Status: ${response.status}`)
+      console.log(`   Content-Type: ${response.headers.get('Content-Type')}`)
+      console.log(`   Transfer-Encoding: ${response.headers.get('Transfer-Encoding') || 'NONE'}`)
+      console.log(`   X-Cache: ${response.headers.get('X-Cache') || 'N/A'}`)
+
       if (!response.ok) {
         let errorMessage = 'Erro ao processar mensagem'
         try {
@@ -246,6 +260,7 @@ export function useChat(conversationId: string) {
         } catch (e) {
           // Se não conseguir fazer parse do JSON, usa mensagem genérica
         }
+        console.error(`❌ [STREAM-DEBUG] API error: ${errorMessage}`)
         throw new Error(errorMessage)
       }
 
@@ -269,11 +284,41 @@ export function useChat(conversationId: string) {
       if (!reader) throw new Error('Erro ao iniciar streaming')
 
       try {
+        let chunkCount = 0
+        let totalChars = 0
+        const streamStartTime = Date.now()
+        let lastChunkTime = streamStartTime
+
+        console.log(`📥 [STREAM-DEBUG] Começando a ler stream...`)
+
         while (true) {
+          const readStartTime = Date.now()
           const { done, value } = await reader.read()
-          if (done) break
+          const readEndTime = Date.now()
+
+          if (done) {
+            const totalTime = Date.now() - streamStartTime
+            console.log(`✅ [STREAM-DEBUG] Stream completo!`)
+            console.log(`   Total chunks: ${chunkCount}`)
+            console.log(`   Total chars: ${totalChars}`)
+            console.log(`   Total time: ${totalTime}ms`)
+            console.log(`   Avg chunk size: ${chunkCount > 0 ? Math.round(totalChars / chunkCount) : 0} chars`)
+            break
+          }
 
           const chunk = decoder.decode(value)
+          chunkCount++
+          totalChars += chunk.length
+          const timeSinceLastChunk = readStartTime - lastChunkTime
+
+          if (chunkCount <= 5 || chunkCount % 10 === 0) {
+            console.log(`📦 [STREAM-DEBUG] Chunk ${chunkCount}: ${chunk.length} chars, +${timeSinceLastChunk}ms desde último`)
+            if (chunkCount <= 2) {
+              console.log(`   Preview: "${chunk.substring(0, 100)}${chunk.length > 100 ? '...' : ''}"`)
+            }
+          }
+
+          lastChunkTime = readEndTime
 
           // Accumulate in ref
           const current = streamingRef.current.get(streamId) || ''

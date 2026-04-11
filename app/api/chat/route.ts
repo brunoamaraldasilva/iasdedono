@@ -440,21 +440,35 @@ ${material.content}`
 
     const stream = new ReadableStream({
       async start(controller) {
+        const streamStartTime = Date.now()
         try {
           // Generate streamed response with tools
           console.log('🎯 [CHAT] Starting chat with Tool Calling support...')
           let chunkCount = 0
+          let firstChunkTime = 0
           for await (const chunk of generateChatResponseWithTools(systemPrompt, chatMessages, handleToolCall)) {
             fullResponse += chunk
             // Send chunk to client
-            controller.enqueue(encoder.encode(chunk))
+            const encoded = encoder.encode(chunk)
+            controller.enqueue(encoded)
             chunkCount++
-            // Log every 10 chunks to verify streaming is happening
-            if (chunkCount % 10 === 0) {
-              console.log(`📤 [CHAT] Streamed ${chunkCount} chunks (${fullResponse.length} chars total)`)
+
+            if (chunkCount === 1) {
+              firstChunkTime = Date.now() - streamStartTime
+              console.log(`⏱️  [CHAT] FIRST CHUNK received after ${firstChunkTime}ms`)
+              console.log(`   First chunk size: ${chunk.length} chars`)
+              console.log(`   Preview: "${chunk.substring(0, 100)}${chunk.length > 100 ? '...' : ''}"`)
+            }
+
+            // Log every 5 chunks to verify streaming is happening
+            if (chunkCount % 5 === 0) {
+              const elapsed = Date.now() - streamStartTime
+              console.log(`📤 [CHAT] Streamed ${chunkCount} chunks (${fullResponse.length} chars) in ${elapsed}ms`)
             }
           }
-          console.log(`✅ [CHAT] Streaming complete: ${chunkCount} total chunks, ${fullResponse.length} chars`)
+          const totalStreamTime = Date.now() - streamStartTime
+          console.log(`✅ [CHAT] Streaming complete: ${chunkCount} chunks, ${fullResponse.length} chars in ${totalStreamTime}ms`)
+          console.log(`   First chunk latency: ${firstChunkTime}ms`)
 
           // Save assistant message to DB after streaming completes (skip for beta)
           if (!isBeta) {
