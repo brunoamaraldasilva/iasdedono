@@ -194,6 +194,8 @@ End with: ---
         continueLoop = true
       } else {
         // No tool calls, stream the final response with streaming
+        console.log('[OPENAI] ⏳ Making streaming request to OpenAI (stream: true)')
+        const streamStartTime = Date.now()
         const stream = await openai.chat.completions.create({
           model: 'gpt-4o-mini',
           messages: requestMessages,
@@ -201,13 +203,24 @@ End with: ---
           max_tokens: 2000,
           stream: true,
         })
+        const streamCreatedTime = Date.now() - streamStartTime
+        console.log(`[OPENAI] ✅ Streaming request created in ${streamCreatedTime}ms`)
 
+        let chunkCount = 0
+        let totalContent = ''
         for await (const chunk of stream) {
           const content = chunk.choices[0]?.delta?.content || ''
           if (content) {
+            chunkCount++
+            totalContent += content
+            if (chunkCount <= 5 || chunkCount % 10 === 0) {
+              console.log(`[OPENAI] 📦 OpenAI chunk ${chunkCount}: ${content.length} chars, total: ${totalContent.length}`)
+            }
             yield content
           }
         }
+        const totalTime = Date.now() - streamStartTime
+        console.log(`[OPENAI] ✅ Stream complete: ${chunkCount} chunks, ${totalContent.length} total chars in ${totalTime}ms`)
       }
     }
   } catch (error) {
