@@ -38,10 +38,14 @@ export default function LoginPage() {
   // Check if already logged in and redirect
   useEffect(() => {
     let isMounted = true
+    let checkCompleted = false
+    let timeoutId: NodeJS.Timeout | null = null
 
     const checkAuth = async () => {
       try {
         const { data: { user } } = await supabase.auth.getUser()
+        checkCompleted = true
+        if (timeoutId) clearTimeout(timeoutId)
 
         if (isMounted && user) {
           router.push('/dashboard')
@@ -49,13 +53,24 @@ export default function LoginPage() {
       } catch (err) {
         // Ignorar erro de auth check na página de login
         console.debug('Auth check error on login page:', err instanceof Error ? err.message : String(err))
+        checkCompleted = true
+        if (timeoutId) clearTimeout(timeoutId)
       }
     }
+
+    // Set 3-second timeout for login page (shorter than dashboard since this is just a redirect)
+    timeoutId = setTimeout(() => {
+      if (!checkCompleted) {
+        console.warn('⏱️  [LOGIN] Auth check timeout on login page, proceeding normally')
+        checkCompleted = true
+      }
+    }, 3000)
 
     checkAuth()
 
     return () => {
       isMounted = false
+      if (timeoutId) clearTimeout(timeoutId)
     }
   }, [router])
 

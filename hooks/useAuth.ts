@@ -32,9 +32,10 @@ export function useAuth() {
       }
     }
 
-    // Timeout para dar feedback se auth demorar muito (3s é bom para UX)
-    // Mas NÃO vai fazer setLoading(false) prematuramente
+    // CRITICAL: Timeout falback para evitar tela branca infinita em produção
+    // Se Supabase auth demorar >5s, força loading = false para não ficar preso
     let timeoutId: NodeJS.Timeout | null = null
+    let authCompleted = false
 
     // Função para verificar se usuário está ativo (whitelist)
     const checkUserStatus = async (userEmail?: string): Promise<boolean> => {
@@ -97,6 +98,7 @@ export function useAuth() {
 
     // Check auth inicial
     const checkAuth = async () => {
+      authCompleted = false
       try {
         // Use getSession() instead of getUser() to avoid Supabase auth lock race condition
         const { data: { session }, error: sessionError } = await supabase.auth.getSession()
@@ -105,6 +107,8 @@ export function useAuth() {
         if (sessionError || !authUser) {
           setUser(null)
           setLoading(false)
+          authCompleted = true
+          if (timeoutId) clearTimeout(timeoutId)
           return
         }
 
@@ -115,6 +119,8 @@ export function useAuth() {
           await supabase.auth.signOut()
           setUser(null)
           setLoading(false)
+          authCompleted = true
+          if (timeoutId) clearTimeout(timeoutId)
           return
         }
 
@@ -122,6 +128,8 @@ export function useAuth() {
         const userData = await loadUserData(authUser.id, authUser.email)
         setUser(userData)
         setLoading(false)
+        authCompleted = true
+        if (timeoutId) clearTimeout(timeoutId)
 
         // Broadcast para outras abas
         if (broadcastChannelRef.current) {
@@ -138,51 +146,69 @@ export function useAuth() {
         console.error('Initial auth check failed:', err)
         setUser(null)
         setLoading(false)
+        authCompleted = true
+        if (timeoutId) clearTimeout(timeoutId)
       }
     }
+
+    // CRITICAL: Set 5-second fallback timeout to prevent infinite loading screen in production
+    // If Supabase calls hang, this ensures loading state gets cleared
+    timeoutId = setTimeout(() => {
+      if (!authCompleted) {
+        console.warn('⏱️  [AUTH] Timeout: Auth check took >5s, forcing loading state to false')
+        setUser(null)
+        setLoading(false)
+        authCompleted = true
+      }
+    }, 5000)
 
     checkAuth()
 
     // Listen para mudanças de auth (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
-      if (session?.user) {
-        // ✅ Check user status before setting
-        const isActive = await checkUserStatus(session.user.email)
-        if (!isActive) {
-          console.warn('🔐 [AUTH] User became inactive, logging out')
-          await supabase.auth.signOut()
+      try {
+        if (session?.user) {
+          // ✅ Check user status before setting
+          const isActive = await checkUserStatus(session.user.email)
+          if (!isActive) {
+            console.warn('🔐 [AUTH] User became inactive, logging out')
+            await supabase.auth.signOut()
+            setUser(null)
+            return
+          }
+
+          // Usuário logado
+          const userData = await loadUserData(session.user.id, session.user.email)
+          setUser(userData)
+
+          if (broadcastChannelRef.current) {
+            try {
+              broadcastChannelRef.current.postMessage({
+                type: 'AUTH_CHANGE',
+                user: userData,
+              })
+            } catch (err) {
+              // Ignorar erro de broadcast
+            }
+          }
+        } else {
+          // Usuário fez logout
           setUser(null)
-          return
-        }
 
-        // Usuário logado
-        const userData = await loadUserData(session.user.id, session.user.email)
-        setUser(userData)
-
-        if (broadcastChannelRef.current) {
-          try {
-            broadcastChannelRef.current.postMessage({
-              type: 'AUTH_CHANGE',
-              user: userData,
-            })
-          } catch (err) {
-            // Ignorar erro de broadcast
+          if (broadcastChannelRef.current) {
+            try {
+              broadcastChannelRef.current.postMessage({
+                type: 'AUTH_CHANGE',
+                user: null,
+              })
+            } catch (err) {
+              // Ignorar erro de broadcast
+            }
           }
         }
-      } else {
-        // Usuário fez logout
+      } catch (err) {
+        console.error('[AUTH] Error in auth state change handler:', err)
         setUser(null)
-
-        if (broadcastChannelRef.current) {
-          try {
-            broadcastChannelRef.current.postMessage({
-              type: 'AUTH_CHANGE',
-              user: null,
-            })
-          } catch (err) {
-            // Ignorar erro de broadcast
-          }
-        }
       }
     })
 
