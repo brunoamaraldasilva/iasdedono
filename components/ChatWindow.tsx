@@ -165,10 +165,13 @@ export function ChatWindow({
                             <p className="mb-2 last:mb-0" {...props} />
                           ),
                           ul: ({ node, ...props }) => (
-                            <ul className="list-disc list-inside mb-2" {...props} />
+                            <ul className="list-disc pl-5 mb-2 space-y-1" {...props} />
                           ),
                           ol: ({ node, ...props }) => (
-                            <ol className="list-decimal list-inside mb-2" {...props} />
+                            <ol className="list-decimal pl-5 mb-2 space-y-1" {...props} />
+                          ),
+                          li: ({ node, ...props }) => (
+                            <li className="text-sm" {...props} />
                           ),
                           code: ({ node, inline, ...props }: any) =>
                             inline ? (

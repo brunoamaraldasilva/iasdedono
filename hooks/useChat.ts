@@ -223,24 +223,12 @@ export function useChat(conversationId: string) {
         throw new Error('Sessão expirada. Por favor, recarregue a página e faça login novamente.')
       }
 
-      // Add empty assistant message that will be filled by streaming
-      const assistantMessage: ChatMessage = {
-        role: 'assistant',
-        content: '',
-      }
-
-      const messagesWithAssistant = [...messagesRef.current, assistantMessage]
-      const assistantIndex = messagesWithAssistant.length - 1
-
-      console.log(`[PHASE 2] Adding empty assistant message:`, {
-        assistantIndex,
-        totalMessages: messagesWithAssistant.length,
-        contentLength: assistantMessage.content.length
-      })
-
-      setMessages(messagesWithAssistant)
-      messagesRef.current = messagesWithAssistant
+      // Keep loading state visible until first chunk arrives
+      // Don't add empty assistant message yet - add it when first chunk arrives
+      setLoading(true)
       streamingRef.current.set(streamId, '')
+
+      let assistantIndex = -1  // Will be set when first chunk arrives
 
       // Use Server-Sent Events for streaming
       const sseStartTime = Date.now()
@@ -260,6 +248,7 @@ export function useChat(conversationId: string) {
 
         let chunkCount = 0
         let totalChars = 0
+        let firstChunkReceived = false
 
         eventSource.addEventListener('message', (event: MessageEvent) => {
           try {
@@ -284,10 +273,9 @@ export function useChat(conversationId: string) {
                 preview: finalContent.substring(0, 150)
               })
 
-              // **CRITICAL FIX**: Single state update with final content
-              // Don't batch updates - do ONE final update after stream completes
+              // Final state update with complete content
               setMessages((prev) => {
-                if (assistantIndex < prev.length) {
+                if (assistantIndex >= 0 && assistantIndex < prev.length) {
                   const updated = [...prev]
                   updated[assistantIndex] = {
                     role: 'assistant',
@@ -303,6 +291,7 @@ export function useChat(conversationId: string) {
                 return prev
               })
 
+              setLoading(false)
               eventSource.close()
 
               // After message completes, emit event to refresh conversations list
@@ -321,16 +310,54 @@ export function useChat(conversationId: string) {
               chunkCount++
               totalChars += chunk.length
 
+              // CREATE BALLOON ON FIRST CHUNK
+              if (!firstChunkReceived) {
+                firstChunkReceived = true
+                console.log(`📥 [SSE] First chunk received, creating assistant message balloon`)
+
+                // Remove loading indicator and create assistant message on first chunk
+                setLoading(false)
+
+                // Create assistant message on first chunk
+                setMessages((prev) => {
+                  const assistantMessage: ChatMessage = {
+                    role: 'assistant',
+                    content: chunk,
+                  }
+                  const updated = [...prev, assistantMessage]
+                  assistantIndex = updated.length - 1
+                  messagesRef.current = updated
+                  return updated
+                })
+
+                // Accumulate the first chunk
+                streamingRef.current.set(streamId, chunk)
+              } else {
+                // Accumulate in ref for subsequent chunks
+                const current = streamingRef.current.get(streamId) || ''
+                const newContent = current + chunk
+                streamingRef.current.set(streamId, newContent)
+
+                // Update state with accumulated content
+                setMessages((prev) => {
+                  if (assistantIndex >= 0 && assistantIndex < prev.length) {
+                    const updated = [...prev]
+                    updated[assistantIndex] = {
+                      role: 'assistant',
+                      content: newContent,
+                    }
+                    messagesRef.current = updated
+                    return updated
+                  }
+                  return prev
+                })
+              }
+
               if (chunkCount <= 5 || chunkCount % 20 === 0) {
                 console.log(`📦 [SSE] Chunk ${chunkCount}: ${chunk.length} chars`)
               }
 
-              // Accumulate ONLY in ref - NO state updates during streaming
-              const current = streamingRef.current.get(streamId) || ''
-              const newContent = current + chunk
-              streamingRef.current.set(streamId, newContent)
-
-              console.log(`[PHASE 3.6] Accumulated ${chunkCount}: ${newContent.length} total chars`)
+              console.log(`[PHASE 3.6] Streaming update ${chunkCount}: ${streamingRef.current.get(streamId)?.length || 0} total chars`)
             }
           } catch (error) {
             console.error('[SSE] Error parsing message:', error)
@@ -349,14 +376,13 @@ export function useChat(conversationId: string) {
       const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido'
       console.error('Error sending message:', errorMsg)
       setError(errorMsg)
+      setLoading(false)
       // Remove last user message on error
       setMessages((prev) => {
         const updated = prev.slice(0, -1)
         messagesRef.current = updated
         return updated
       })
-    } finally {
-      setLoading(false)
     }
   }, [agent, conversationId])
 

@@ -197,15 +197,31 @@ export async function GET(request: NextRequest) {
             // Generate title for first message in background
             if (isFirstMessage) {
               console.log('✅ Stream complete, queuing title generation...')
-              setImmediate(() => {
-                generateConversationTitle(agent.name, message)
-                  .then(title => {
-                    return supabase
-                      .from('conversations')
-                      .update({ title })
-                      .eq('id', conversationId)
-                  })
-                  .catch(err => console.error('Title generation failed:', err))
+              setImmediate(async () => {
+                try {
+                  const title = await generateConversationTitle(agent.name, message)
+                  console.log(`🎯 [TITLE] Generated title: "${title}"`)
+
+                  // Use admin client to update conversation title
+                  const adminSupabase = createAdminSupabaseClient()
+                  if (!adminSupabase) {
+                    console.error('❌ [TITLE] Admin Supabase client not available')
+                    return
+                  }
+
+                  const { error } = await adminSupabase
+                    .from('conversations')
+                    .update({ title })
+                    .eq('id', conversationId)
+
+                  if (error) {
+                    console.error('❌ [TITLE] Failed to update title in DB:', error)
+                  } else {
+                    console.log(`✅ [TITLE] Successfully updated conversation title in DB`)
+                  }
+                } catch (err) {
+                  console.error('❌ [TITLE] Error generating/updating title:', err instanceof Error ? err.message : 'Unknown error')
+                }
               })
             }
           }
