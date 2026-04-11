@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import type { Agent } from '@/types/agent'
 import type { ChatMessage } from '@/types/chat'
@@ -222,16 +223,18 @@ export function useChat(conversationId: string) {
         throw new Error('Sessão expirada. Por favor, recarregue a página e faça login novamente.')
       }
 
-      // Add assistant message placeholder with loading indicator
+      // Add empty assistant message that will be filled by streaming
       const assistantMessage: ChatMessage = {
         role: 'assistant',
-        content: '🔄 Processando sua pergunta...',
+        content: '',
       }
 
       const messagesWithAssistant = [...messagesRef.current, assistantMessage]
       const assistantIndex = messagesWithAssistant.length - 1
 
-      setMessages(messagesWithAssistant)
+      flushSync(() => {
+        setMessages(messagesWithAssistant)
+      })
       messagesRef.current = messagesWithAssistant
       streamingRef.current.set(streamId, '')
 
@@ -289,17 +292,19 @@ export function useChat(conversationId: string) {
               const newContent = current + chunk
               streamingRef.current.set(streamId, newContent)
 
-              // Update state with new content
-              setMessages((prev) => {
-                if (assistantIndex < prev.length) {
-                  const updated = [...prev]
-                  updated[assistantIndex] = {
-                    role: 'assistant',
-                    content: newContent,
+              // Update state with new content - force synchronous render for real-time streaming
+              flushSync(() => {
+                setMessages((prev) => {
+                  if (assistantIndex < prev.length) {
+                    const updated = [...prev]
+                    updated[assistantIndex] = {
+                      role: 'assistant',
+                      content: newContent,
+                    }
+                    return updated
                   }
-                  return updated
-                }
-                return prev
+                  return prev
+                })
               })
             }
           } catch (error) {

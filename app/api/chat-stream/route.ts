@@ -89,13 +89,25 @@ export async function GET(request: NextRequest) {
           // Add business context if available
           if (userId) {
             const { data: context } = await supabase
-              .from('business_contexts')
+              .from('business_context')
               .select('*')
               .eq('user_id', userId)
               .single()
 
             if (context) {
-              systemPrompt += `\n\n## Contexto do Negócio:\n${context.business_context || ''}`
+              // Build context from all fields
+              const contextParts = []
+              if (context.business_name) contextParts.push(`Nome: ${context.business_name}`)
+              if (context.business_type) contextParts.push(`Tipo: ${context.business_type}`)
+              if (context.revenue) contextParts.push(`Faturamento: ${context.revenue}`)
+              if (context.team_size) contextParts.push(`Tamanho do time: ${context.team_size}`)
+              if (context.goals) contextParts.push(`Objetivos: ${context.goals}`)
+              if (context.challenges) contextParts.push(`Desafios: ${context.challenges}`)
+              if (context.additional_info) contextParts.push(`Outras informações: ${context.additional_info}`)
+
+              if (contextParts.length > 0) {
+                systemPrompt += `\n\n## Contexto do Negócio do Usuário:\n${contextParts.join('\n')}`
+              }
             }
           }
 
