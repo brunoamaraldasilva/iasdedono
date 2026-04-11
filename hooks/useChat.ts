@@ -275,22 +275,19 @@ export function useChat(conversationId: string) {
               })
 
               // Final state update with complete content
-              setMessages((prev) => {
-                if (assistantIndexRef.current >= 0 && assistantIndexRef.current < prev.length) {
-                  const updated = [...prev]
-                  updated[assistantIndexRef.current] = {
-                    role: 'assistant',
-                    content: finalContent,
-                  }
-                  console.log(`✅ [PHASE 4] Final state update applied:`, {
-                    assistantIndex: assistantIndexRef.current,
-                    contentLength: finalContent.length
-                  })
-                  messagesRef.current = updated
-                  return updated
+              if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
+                const updated = [...messagesRef.current]
+                updated[assistantIndexRef.current] = {
+                  role: 'assistant',
+                  content: finalContent,
                 }
-                return prev
-              })
+                console.log(`✅ [PHASE 4] Final state update applied:`, {
+                  assistantIndex: assistantIndexRef.current,
+                  contentLength: finalContent.length
+                })
+                messagesRef.current = updated
+                setMessages(updated)
+              }
 
               setLoading(false)
               eventSource.close()
@@ -316,20 +313,18 @@ export function useChat(conversationId: string) {
                 firstChunkReceived = true
                 console.log(`📥 [SSE] First chunk received, creating assistant message balloon`)
 
-                // Remove loading indicator and create assistant message on first chunk
-                setLoading(false)
+                // FIX: Don't rely on setMessages callback timing (causes batching issues in production)
+                // Instead, directly update messagesRef BEFORE calling setMessages
+                const assistantMessage: ChatMessage = {
+                  role: 'assistant',
+                  content: chunk,
+                }
+                const updated = [...messagesRef.current, assistantMessage]
+                messagesRef.current = updated
+                assistantIndexRef.current = updated.length - 1
 
-                // Create assistant message on first chunk
-                setMessages((prev) => {
-                  const assistantMessage: ChatMessage = {
-                    role: 'assistant',
-                    content: chunk,
-                  }
-                  const updated = [...prev, assistantMessage]
-                  assistantIndexRef.current = updated.length - 1
-                  messagesRef.current = updated
-                  return updated
-                })
+                setLoading(false)
+                setMessages(updated)  // Force re-render with known good state
 
                 // Accumulate the first chunk
                 streamingRef.current.set(streamId, chunk)
@@ -340,18 +335,16 @@ export function useChat(conversationId: string) {
                 streamingRef.current.set(streamId, newContent)
 
                 // Update state with accumulated content
-                setMessages((prev) => {
-                  if (assistantIndexRef.current >= 0 && assistantIndexRef.current < prev.length) {
-                    const updated = [...prev]
-                    updated[assistantIndexRef.current] = {
-                      role: 'assistant',
-                      content: newContent,
-                    }
-                    messagesRef.current = updated
-                    return updated
+                // Use KNOWN assistantIndex from ref, not from callback
+                if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
+                  const updated = [...messagesRef.current]
+                  updated[assistantIndexRef.current] = {
+                    role: 'assistant',
+                    content: newContent,
                   }
-                  return prev
-                })
+                  messagesRef.current = updated
+                  setMessages(updated)
+                }
               }
 
               if (chunkCount <= 5 || chunkCount % 20 === 0) {
