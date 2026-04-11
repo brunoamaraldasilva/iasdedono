@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { flushSync } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import type { Agent } from '@/types/agent'
 import type { ChatMessage } from '@/types/chat'
@@ -18,6 +17,8 @@ export function useChat(conversationId: string) {
   const streamingRef = useRef<Map<string, string>>(new Map())
   const isMountedRef = useRef(true)
   const assistantIndexRef = useRef<number>(-1)
+  const rafRef = useRef<number | null>(null)
+  const pendingUpdateRef = useRef(false)
 
 
   // Load conversation and agent on mount
@@ -164,6 +165,10 @@ export function useChat(conversationId: string) {
         subscriptionRef.current.unsubscribe()
         subscriptionRef.current = null
       }
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current)
+        rafRef.current = null
+      }
     }
   }, [conversationId])
 
@@ -294,6 +299,12 @@ export function useChat(conversationId: string) {
               setLoading(false)
               eventSource.close()
 
+              // Clean up any pending RAF
+              if (rafRef.current) {
+                cancelAnimationFrame(rafRef.current)
+                rafRef.current = null
+              }
+
               // After message completes, emit event to refresh conversations list
               if (isFirstMessage) {
                 console.log('🔄 [HOOK] First message complete, triggering sidebar refresh...')
@@ -346,13 +357,17 @@ export function useChat(conversationId: string) {
                   }
                   messagesRef.current = updated
 
-                  // FIX: Use flushSync to force immediate render instead of batching
-                  // React 18 batches all setState calls together, even with setTimeout(0)
-                  // flushSync forces React to render immediately after this update
-                  // This ensures each chunk gets its own render cycle for progressive streaming UX
-                  flushSync(() => {
-                    setMessages(updated)
-                  })
+                  // FIX: Use requestAnimationFrame to batch updates to screen refresh rate
+                  // Instead of rendering per chunk (227 renders = freeze),
+                  // batch chunks until next frame (60fps = 16ms interval)
+                  // Schedule RAF if not already pending
+                  if (!pendingUpdateRef.current) {
+                    pendingUpdateRef.current = true
+                    rafRef.current = requestAnimationFrame(() => {
+                      pendingUpdateRef.current = false
+                      setMessages([...messagesRef.current])
+                    })
+                  }
                 } else {
                   console.warn(`[DIAGNOSTIC] Invalid assistantIndex: ${assistantIndexRef.current}, messagesRef.length: ${messagesRef.current.length}`)
                 }
