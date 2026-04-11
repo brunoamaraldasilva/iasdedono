@@ -17,6 +17,7 @@ function checkPasswordStrength(password: string) {
 export default function LoginPage() {
   const router = useRouter()
   const initCheckRef = useRef(false)
+  const mountCountRef = useRef(0)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [passwordConfirm, setPasswordConfirm] = useState('')
@@ -38,8 +39,16 @@ export default function LoginPage() {
 
   // Check if already logged in and redirect
   useEffect(() => {
+    mountCountRef.current++
+    const mountNumber = mountCountRef.current
+    console.log(`🔵 [LOGIN] Component mount #${mountNumber}`)
+
     // Prevent multiple executions (CRITICAL: router dependency causes loop)
-    if (initCheckRef.current) return
+    if (initCheckRef.current) {
+      console.log(`🔴 [LOGIN] Mount #${mountNumber} BLOCKED by guard (initCheckRef.current = true)`)
+      return
+    }
+    console.log(`🟢 [LOGIN] Mount #${mountNumber} PASSED guard check, setting initCheckRef.current = true`)
     initCheckRef.current = true
 
     let isMounted = true
@@ -48,11 +57,14 @@ export default function LoginPage() {
 
     const checkAuth = async () => {
       try {
+        console.log(`🔵 [LOGIN] Mount #${mountNumber} calling supabase.auth.getUser()`)
         const { data: { user } } = await supabase.auth.getUser()
         checkCompleted = true
         if (timeoutId) clearTimeout(timeoutId)
 
+        console.log(`🔵 [LOGIN] Mount #${mountNumber} auth check completed. User: ${user?.email || 'none'}`)
         if (isMounted && user) {
+          console.log(`🟡 [LOGIN] Mount #${mountNumber} pushing to /dashboard`)
           router.push('/dashboard')
         }
       } catch (err) {
@@ -66,7 +78,7 @@ export default function LoginPage() {
     // Set 3-second timeout for login page (shorter than dashboard since this is just a redirect)
     timeoutId = setTimeout(() => {
       if (!checkCompleted) {
-        console.warn('⏱️  [LOGIN] Auth check timeout on login page, proceeding normally')
+        console.warn(`⏱️  [LOGIN] Mount #${mountNumber} Auth check timeout on login page, proceeding normally`)
         checkCompleted = true
       }
     }, 3000)
@@ -74,6 +86,7 @@ export default function LoginPage() {
     checkAuth()
 
     return () => {
+      console.log(`🟣 [LOGIN] Mount #${mountNumber} CLEANUP: component unmounting`)
       isMounted = false
       if (timeoutId) clearTimeout(timeoutId)
     }
