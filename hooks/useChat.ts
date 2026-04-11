@@ -17,6 +17,17 @@ export function useChat(conversationId: string) {
   const streamingRef = useRef<Map<string, string>>(new Map())
   const isMountedRef = useRef(true)
   const assistantIndexRef = useRef<number>(-1)
+  const messageChannelRef = useRef<MessageChannel | null>(null)
+  const renderQueueRef = useRef<Array<() => void>>([])
+
+  // Initialize message channel for breaking React batching
+  useEffect(() => {
+    messageChannelRef.current = new MessageChannel()
+    messageChannelRef.current.port2.onmessage = () => {
+      const render = renderQueueRef.current.shift()
+      if (render) render()
+    }
+  }, [])
 
   // Load conversation and agent on mount
   useEffect(() => {
@@ -344,12 +355,15 @@ export function useChat(conversationId: string) {
                   }
                   messagesRef.current = updated
 
-                  // Break React batching with requestAnimationFrame
-                  // RAF is more effective than setTimeout for breaking React 18 batching
-                  // Each chunk gets its own frame render cycle
-                  requestAnimationFrame(() => {
+                  // Break React batching with MessageChannel
+                  // MessageChannel posts to a different macrotask queue, preventing batching
+                  // Each update gets its own message in the port, forcing immediate renders
+                  if (messageChannelRef.current) {
+                    renderQueueRef.current.push(() => setMessages(updated))
+                    messageChannelRef.current.port1.postMessage(null)
+                  } else {
                     setMessages(updated)
-                  })
+                  }
                 }
               }
 
