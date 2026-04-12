@@ -12,7 +12,6 @@ export function useAuth() {
   const [error, setError] = useState<string | null>(null)
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null)
   const initCheckRef = useRef(false)
-  const processedSessionRef = useRef<string | null>(null)  // Track which session we've already processed
 
   useEffect(() => {
     // Previne múltiplas execuções
@@ -125,24 +124,39 @@ export function useAuth() {
     // CRITICAL: Use onAuthStateChange for initialization
     // It fires IMMEDIATELY with session from browser cookies (no HTTP request needed)
     // Then continues listening for auth state changes
+    let lastProcessedSessionId: string | null = null
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       try {
-        // Only process if session ID changed (prevents infinite loops on multiple events)
-        // onAuthStateChange fires multiple events (SIGNED_IN, INITIAL_SESSION) for same session
-        const currentSessionId = session?.user?.id || 'NONE'
-        if (currentSessionId === processedSessionRef.current) {
-          return // Already processed this session
+        // Only process if session ID changed (prevents duplicate event processing)
+        // onAuthStateChange fires SIGNED_IN and INITIAL_SESSION for same session
+        const currentSessionId = session?.user?.id || null
+        if (currentSessionId === lastProcessedSessionId) {
+          return // Already processed this exact session, skip
         }
-        processedSessionRef.current = currentSessionId
+        lastProcessedSessionId = currentSessionId
 
         if (session?.user) {
-          // ✅ CRITICAL OPTIMIZATION: Render immediately, verify in background
-          // Don't block on whitelist/user data queries - they run in background
-          setLoading(false)
+          // User is authenticated (has valid session)
+          // Load data in background, keep loading=true until complete
 
-          // 🔄 Load user data in background (fire and forget)
-          loadUserData(session.user.id, session.user.email).then((userData) => {
+          // 🔄 Load user data in background
+          Promise.all([
+            loadUserData(session.user.id, session.user.email),
+            checkUserStatus(session.user.email),
+          ]).then(([userData, isActive]) => {
+            // Check whitelist status first
+            if (!isActive) {
+              console.warn('🔐 [AUTH] User is inactive, logging out')
+              supabase.auth.signOut()
+              setUser(null)
+              setLoading(false)
+              return
+            }
+
+            // User is active and data loaded
             setUser(userData)
+            setLoading(false)
 
             if (broadcastChannelRef.current) {
               try {
@@ -155,20 +169,15 @@ export function useAuth() {
               }
             }
           }).catch((err) => {
-            console.error('[AUTH] Error loading user data:', err)
-            // Continue anyway - user is authenticated even if data load fails
-          })
-
-          // 🔄 Check whitelist status in background
-          checkUserStatus(session.user.email).then((isActive) => {
-            if (!isActive) {
-              console.warn('🔐 [AUTH] User is inactive, logging out')
-              supabase.auth.signOut()
-              setUser(null)
-            }
-          }).catch((err) => {
-            console.error('[AUTH] Error checking whitelist:', err)
-            // Continue anyway - whitelist check failure shouldn't block auth
+            console.error('[AUTH] Error in background auth checks:', err)
+            // Set minimal user data and allow app to load
+            setUser({
+              id: session.user.id,
+              email: session.user.email,
+              name: '',
+              role: 'user',
+            })
+            setLoading(false)
           })
 
           // Start auto-refresh: every 50 minutes
@@ -178,7 +187,6 @@ export function useAuth() {
             }, 50 * 60 * 1000)
           }
         } else {
-          processedSessionRef.current = 'NONE'  // Reset for next login
           setUser(null)
           setLoading(false)
 
