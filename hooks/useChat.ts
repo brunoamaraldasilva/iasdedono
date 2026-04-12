@@ -167,7 +167,7 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
         subscriptionRef.current = null
       }
     }
-  }, [conversationId, isLoadingMessages])
+  }, [conversationId])
 
   const sendMessage = useCallback(async (content: string, documentIds?: string[], documentNames?: string[], useWebSearch?: boolean) => {
     if (!agent || !agent.id) {
