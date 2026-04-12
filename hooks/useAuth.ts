@@ -47,22 +47,18 @@ export function useAuth() {
       try {
         console.log('[WHITELIST-CHECK] Querying whitelist table...')
 
-        // CRITICAL FIX: Add 5-second timeout to prevent hanging on SIGNED_IN events
-        // Wraps the query promise with a timeout to prevent infinite white screen
-        const queryPromise = supabase
+        // NOTE: This now runs in background, not blocking render
+        // RLS policy fixed to allow authenticated users to read
+        const { data: whitelistEntry, error } = await supabase
           .from('whitelist')
           .select('status')
           .eq('email', userEmail.toLowerCase())
           .maybeSingle()
 
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('WHITELIST_QUERY_TIMEOUT')), 5000)
-        )
-
-        const { data: whitelistEntry } = await Promise.race([
-          queryPromise,
-          timeoutPromise,
-        ]) as any
+        if (error) {
+          console.error('[WHITELIST-CHECK] Query error:', error)
+          return true // Fail-open
+        }
 
         console.log('[WHITELIST-CHECK] Query complete, entry:', whitelistEntry)
         if (whitelistEntry?.status === 'inactive') {
@@ -71,15 +67,9 @@ export function useAuth() {
         }
         console.log('[WHITELIST-CHECK] User is active, returning true')
         return true
-      } catch (err: any) {
-        // Check if it's a timeout
-        if (err?.message === 'WHITELIST_QUERY_TIMEOUT') {
-          console.error('❌ [WHITELIST-CHECK] Query timeout after 5s (RLS policy issue suspected on SIGNED_IN events), failing open')
-          console.log('   This prevents white screen. Fix: Update RLS policy on whitelist table to allow authenticated users on SIGNED_IN events.')
-          return true // Fail-open: allow user through to prevent white screen
-        }
-        console.error('[WHITELIST-CHECK] Error:', err)
-        return true
+      } catch (err) {
+        console.error('[WHITELIST-CHECK] Unexpected error:', err)
+        return true // Fail-open: allow user through
       }
     }
 
@@ -89,22 +79,13 @@ export function useAuth() {
       try {
         console.log('[LOAD-USER-DATA] Querying users table...')
 
-        // CRITICAL FIX: Add 5-second timeout to prevent hanging on SIGNED_IN events
-        // Same RLS policy issue as whitelist table
-        const queryPromise = supabase
+        // NOTE: This now runs in background, not blocking render
+        // RLS policy fixed to allow users to read their own data
+        const { data: userData, error: dbError } = await supabase
           .from('users')
           .select('*')
           .eq('id', userId)
           .single()
-
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('LOAD_USER_TIMEOUT')), 5000)
-        )
-
-        const { data: userData, error: dbError } = await Promise.race([
-          queryPromise,
-          timeoutPromise,
-        ]) as any
 
         console.log('[LOAD-USER-DATA] Query complete, error:', dbError?.code, 'data:', !!userData)
 
@@ -129,21 +110,9 @@ export function useAuth() {
 
         console.log('[LOAD-USER-DATA] Returning user data')
         return userData
-      } catch (err: any) {
-        // Check if it's a timeout
-        if (err?.message === 'LOAD_USER_TIMEOUT') {
-          console.error('❌ [LOAD-USER-DATA] Query timeout after 5s (RLS policy issue on SIGNED_IN), returning minimal user object')
-          console.log('   User will load with minimal data. Fix: Update RLS policy on users table.')
-          // Return minimal user object to prevent white screen
-          return {
-            id: userId,
-            email: userEmail || '',
-            name: '',
-            role: 'user',
-          }
-        }
+      } catch (err) {
         console.error('[LOAD-USER-DATA] Error:', err)
-        // Return minimal user object on any error to prevent white screen
+        // Return minimal user object on error (running in background anyway)
         return {
           id: userId,
           email: userEmail || '',
@@ -189,34 +158,46 @@ export function useAuth() {
 
         if (session?.user) {
           console.log('[AUTH-PATH-A] User is logged in, email:', session.user.email)
-          const isActive = await checkUserStatus(session.user.email)
-          console.log('[AUTH-PATH-A] isActive check complete:', isActive)
-          if (!isActive) {
-            console.warn('🔐 [AUTH] User is inactive, logging out')
-            await supabase.auth.signOut()
-            setUser(null)
-            console.log('[AUTH-PATH-A1] setLoading(false) - INACTIVE USER')
-            setLoading(false)
-            return
-          }
 
-          console.log('[AUTH-PATH-A] About to load user data...')
-          const userData = await loadUserData(session.user.id, session.user.email)
-          console.log('[AUTH-PATH-A] User data loaded:', !!userData)
-          setUser(userData)
-          console.log('[AUTH-PATH-A2] setLoading(false) - LOGGED IN')
+          // ✅ CRITICAL OPTIMIZATION: Render immediately, verify in background
+          // Don't block on whitelist/user data queries - they can timeout on SIGNED_IN events
+          // Set loading=false FIRST so UI renders
+          console.log('[AUTH-PATH-A-IMMEDIATE] setLoading(false) - RENDER APP NOW')
           setLoading(false)
 
-          if (broadcastChannelRef.current) {
-            try {
-              broadcastChannelRef.current.postMessage({
-                type: 'AUTH_CHANGE',
-                user: userData,
-              })
-            } catch (err) {
-              // Channel pode estar fechado
+          // 🔄 Load user data in background (fire and forget)
+          // Don't block rendering on these queries
+          loadUserData(session.user.id, session.user.email).then((userData) => {
+            console.log('[AUTH-BACKGROUND] User data loaded:', !!userData)
+            setUser(userData)
+
+            if (broadcastChannelRef.current) {
+              try {
+                broadcastChannelRef.current.postMessage({
+                  type: 'AUTH_CHANGE',
+                  user: userData,
+                })
+              } catch (err) {
+                // Channel pode estar fechado
+              }
             }
-          }
+          }).catch((err) => {
+            console.error('[AUTH-BACKGROUND] Error loading user data:', err)
+            // Continue anyway - user is authenticated even if data load fails
+          })
+
+          // 🔄 Check whitelist status in background
+          checkUserStatus(session.user.email).then((isActive) => {
+            console.log('[AUTH-BACKGROUND] Whitelist check complete:', isActive)
+            if (!isActive) {
+              console.warn('🔐 [AUTH] User is inactive, logging out')
+              supabase.auth.signOut()
+              setUser(null)
+            }
+          }).catch((err) => {
+            console.error('[AUTH-BACKGROUND] Error checking whitelist:', err)
+            // Continue anyway - whitelist check failure shouldn't block auth
+          })
 
           // Start auto-refresh: every 50 minutes
           // Supabase default token TTL is 1 hour, so refresh at 50min is safe
