@@ -46,11 +46,23 @@ export function useAuth() {
 
       try {
         console.log('[WHITELIST-CHECK] Querying whitelist table...')
-        const { data: whitelistEntry } = await supabase
+
+        // CRITICAL FIX: Add 5-second timeout to prevent hanging on SIGNED_IN events
+        // Wraps the query promise with a timeout to prevent infinite white screen
+        const queryPromise = supabase
           .from('whitelist')
           .select('status')
           .eq('email', userEmail.toLowerCase())
           .maybeSingle()
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('WHITELIST_QUERY_TIMEOUT')), 5000)
+        )
+
+        const { data: whitelistEntry } = await Promise.race([
+          queryPromise,
+          timeoutPromise,
+        ]) as any
 
         console.log('[WHITELIST-CHECK] Query complete, entry:', whitelistEntry)
         if (whitelistEntry?.status === 'inactive') {
@@ -59,7 +71,13 @@ export function useAuth() {
         }
         console.log('[WHITELIST-CHECK] User is active, returning true')
         return true
-      } catch (err) {
+      } catch (err: any) {
+        // Check if it's a timeout
+        if (err?.message === 'WHITELIST_QUERY_TIMEOUT') {
+          console.error('❌ [WHITELIST-CHECK] Query timeout after 5s (RLS policy issue suspected on SIGNED_IN events), failing open')
+          console.log('   This prevents white screen. Fix: Update RLS policy on whitelist table to allow authenticated users on SIGNED_IN events.')
+          return true // Fail-open: allow user through to prevent white screen
+        }
         console.error('[WHITELIST-CHECK] Error:', err)
         return true
       }
