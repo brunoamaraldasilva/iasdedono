@@ -274,17 +274,23 @@ export function useChat(conversationId: string) {
         let assistantContent = ''
 
         const applyAssistantContent = (nextContent: string) => {
-          setMessages((prev) => {
-            if (assistantIndex >= prev.length) return prev
+          // CRITICAL: Break React batching with setTimeout(0)
+          // This forces each chunk update into separate macrotask
+          // Without this, React 18 batches all setState calls in event listener
+          // resulting in complete response appearing all at once
+          setTimeout(() => {
+            setMessages((prev) => {
+              if (assistantIndex >= prev.length) return prev
 
-            const updated = [...prev]
-            updated[assistantIndex] = {
-              role: 'assistant',
-              content: nextContent,
-            }
-            messagesRef.current = updated
-            return updated
-          })
+              const updated = [...prev]
+              updated[assistantIndex] = {
+                role: 'assistant',
+                content: nextContent,
+              }
+              messagesRef.current = updated
+              return updated
+            })
+          }, 0)
         }
 
         while (true) {
