@@ -93,14 +93,32 @@ export function useAuth() {
 
     // Check auth - MUST complete before setting loading = false
     const checkAuth = async () => {
+      // TIMEOUT PROTECTION: If any query hangs, force timeout to unblock UI
+      let timeoutId: NodeJS.Timeout | null = null
+
       try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+        const timeoutPromise = new Promise((_, reject) =>
+          (timeoutId = setTimeout(
+            () => reject(new Error('Auth check timeout - proceeding as guest')),
+            5000  // 5 second timeout for auth check
+          ))
+        )
+
+        // Race getSession against timeout
+        const sessionPromise = supabase.auth.getSession()
+        const { data: { session }, error: sessionError } = await Promise.race([
+          sessionPromise,
+          timeoutPromise as any,
+        ])
+
+        if (timeoutId) clearTimeout(timeoutId)
+
         const authUser = session?.user
 
         if (sessionError || !authUser) {
           setUser(null)
           console.log('[AUTH] No authenticated user found')
-          setLoading(false)  // CRITICAL: Set loading = false AFTER check completes
+          setLoading(false)
           return
         }
 
@@ -109,13 +127,13 @@ export function useAuth() {
           console.warn('🔐 [AUTH] Inactive user session, forcing logout')
           await supabase.auth.signOut()
           setUser(null)
-          setLoading(false)  // CRITICAL: Set loading = false AFTER check completes
+          setLoading(false)
           return
         }
 
         const userData = await loadUserData(authUser.id, authUser.email)
         setUser(userData)
-        setLoading(false)  // CRITICAL: Set loading = false AFTER user is set
+        setLoading(false)
 
         if (broadcastChannelRef.current) {
           try {
@@ -128,14 +146,21 @@ export function useAuth() {
           }
         }
       } catch (err) {
-        console.error('[AUTH] Background auth check failed:', err)
+        if (timeoutId) clearTimeout(timeoutId)
+        console.error('[AUTH] Auth check failed or timed out:', err instanceof Error ? err.message : String(err))
         setUser(null)
-        setLoading(false)  // CRITICAL: Set loading = false AFTER check completes
+        setLoading(false)  // CRITICAL: Always set loading = false to unblock UI
       }
     }
 
     // Start auth check (MUST complete before dashboard redirects)
     checkAuth()
+
+    // GLOBAL TIMEOUT: If auth check hangs, force unblock after 7 seconds
+    const globalAuthTimeoutId = setTimeout(() => {
+      console.warn('[AUTH] Global timeout: forcing loading = false to unblock UI')
+      setLoading(false)
+    }, 7000)
 
     // Listen para mudanças de auth (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
@@ -185,6 +210,7 @@ export function useAuth() {
     // Cleanup
     return () => {
       subscription?.unsubscribe()
+      clearTimeout(globalAuthTimeoutId)
       try {
         broadcastChannelRef.current?.close()
       } catch (err) {
