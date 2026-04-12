@@ -30,8 +30,11 @@ export function ChatWindow({
   const [messageSources, setMessageSources] = useState<Map<number, SourceData[]>>(new Map())
 
   // Log whenever messages prop changes
+  const renderCountRef = useRef(0)
   useEffect(() => {
-    console.log(`[PHASE 5] ChatWindow received messages prop:`, {
+    renderCountRef.current += 1
+    const timestamp = new Date().toISOString().split('T')[1].split('.')[0]
+    console.log(`[PHASE 5] RENDER #${renderCountRef.current} at ${timestamp}:`, {
       count: messages.length,
       loading,
       isLoadingMessages,

@@ -187,24 +187,33 @@ export async function GET(request: NextRequest) {
           console.log(`🎯 [CHAT-STREAM] Starting RAW STREAMING with Tool Calling support...`)
 
           let liveChunkCount = 0
+          const chunkTimestamps: { chunkNum: number; chars: number; serverTime: number }[] = []
           for await (const chunk of generateChatResponseRawStream(systemPrompt, chatMessages, onToolCall)) {
             fullResponse += chunk
 
             // Send chunk via SSE - IMMEDIATE delivery
             const sseChunk = `data: ${JSON.stringify({ content: chunk })}\n\n`
             liveChunkCount++
+            const chunkSendTime = Date.now() - streamStartTime
             controller.enqueue(encoder.encode(sseChunk))
 
+            chunkTimestamps.push({ chunkNum: liveChunkCount, chars: chunk.length, serverTime: chunkSendTime })
+
             if (!firstChunkSent) {
-              const firstChunkLatency = Date.now() - streamStartTime
-              console.log(`⏱️  [CHAT-STREAM] FIRST CHUNK sent after ${firstChunkLatency}ms`)
+              console.log(`⏱️  [CHAT-STREAM] FIRST CHUNK sent after ${chunkSendTime}ms`)
               firstChunkSent = true
             }
 
             if (liveChunkCount <= 10 || liveChunkCount % 50 === 0) {
-              console.log(`[DIAGNOSTIC-LIVE] Live chunk ${liveChunkCount}: ${chunk.length} chars`)
+              console.log(`[DIAGNOSTIC-LIVE] Chunk ${liveChunkCount}: +${chunk.length} chars (server timestamp: ${chunkSendTime}ms)`)
             }
           }
+
+          console.log(`[DIAGNOSTIC-TIMING] Chunk transmission timeline:`,
+            chunkTimestamps.slice(0, 10).map(t => `#${t.chunkNum}(${t.chars}c@${t.serverTime}ms)`).join(' → '),
+            '...',
+            chunkTimestamps.slice(-3).map(t => `#${t.chunkNum}(${t.chars}c@${t.serverTime}ms)`).join(' → ')
+          )
 
           // Send completion marker
           controller.enqueue(encoder.encode('data: [DONE]\n\n'))
