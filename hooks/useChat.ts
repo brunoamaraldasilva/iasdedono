@@ -327,6 +327,10 @@ export function useChat(conversationId: string) {
                   messagesRef.current = updated
                   return updated
                 })
+
+                // CRITICAL: Break React 18 batching to force render between chunks
+                // Without this, all setMessages calls batch together and only render at the end
+                await new Promise(resolve => setTimeout(resolve, 0))
               }
             } catch (parseError) {
               console.warn('[STREAM] Failed to parse event data:', data.substring(0, 100))
