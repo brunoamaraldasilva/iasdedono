@@ -39,56 +39,28 @@ export default function LoginPage() {
 
   // Check if already logged in and redirect
   useEffect(() => {
-    mountCountRef.current++
-    const mountNumber = mountCountRef.current
-    console.log(`🔵 [LOGIN] Component mount #${mountNumber}`)
-
-    // Prevent multiple executions (CRITICAL: router dependency causes loop)
-    if (initCheckRef.current) {
-      console.log(`🔴 [LOGIN] Mount #${mountNumber} BLOCKED by guard (initCheckRef.current = true)`)
-      return
-    }
-    console.log(`🟢 [LOGIN] Mount #${mountNumber} PASSED guard check, setting initCheckRef.current = true`)
+    // Prevent multiple executions
+    if (initCheckRef.current) return
     initCheckRef.current = true
 
     let isMounted = true
-    let checkCompleted = false
-    let timeoutId: NodeJS.Timeout | null = null
 
     const checkAuth = async () => {
       try {
-        console.log(`🔵 [LOGIN] Mount #${mountNumber} calling supabase.auth.getUser()`)
         const { data: { user } } = await supabase.auth.getUser()
-        checkCompleted = true
-        if (timeoutId) clearTimeout(timeoutId)
-
-        console.log(`🔵 [LOGIN] Mount #${mountNumber} auth check completed. User: ${user?.email || 'none'}`)
         if (isMounted && user) {
-          console.log(`🟡 [LOGIN] Mount #${mountNumber} pushing to /dashboard`)
           router.push('/dashboard')
         }
       } catch (err) {
-        // Ignorar erro de auth check na página de login
+        // Ignorar erro de auth check
         console.debug('Auth check error on login page:', err instanceof Error ? err.message : String(err))
-        checkCompleted = true
-        if (timeoutId) clearTimeout(timeoutId)
       }
     }
-
-    // Set 3-second timeout for login page (shorter than dashboard since this is just a redirect)
-    timeoutId = setTimeout(() => {
-      if (!checkCompleted) {
-        console.warn(`⏱️  [LOGIN] Mount #${mountNumber} Auth check timeout on login page, proceeding normally`)
-        checkCompleted = true
-      }
-    }, 3000)
 
     checkAuth()
 
     return () => {
-      console.log(`🟣 [LOGIN] Mount #${mountNumber} CLEANUP: component unmounting`)
       isMounted = false
-      if (timeoutId) clearTimeout(timeoutId)
     }
   }, [])
 

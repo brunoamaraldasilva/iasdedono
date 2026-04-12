@@ -18,9 +18,7 @@ export function useAuth() {
     if (initCheckRef.current) return
     initCheckRef.current = true
 
-    // CRITICAL: Keep loading = true until first auth check completes
-    // This prevents dashboard from redirecting back to login before we know the user is authenticated
-    // ONLY set loading = false when auth check finishes (either with user or without)
+    let refreshIntervalId: NodeJS.Timeout | null = null
 
     // Setup BroadcastChannel para sync entre abas
     if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
@@ -91,27 +89,33 @@ export function useAuth() {
       }
     }
 
-    // Check auth - MUST complete before setting loading = false
-    const checkAuth = async () => {
-      // TIMEOUT PROTECTION: If any query hangs, force timeout to unblock UI
-      let timeoutId: NodeJS.Timeout | null = null
-
+    // Refresh token BEFORE it expires (every 50 minutes)
+    const refreshSession = async () => {
       try {
-        const timeoutPromise = new Promise((_, reject) =>
-          (timeoutId = setTimeout(
-            () => reject(new Error('Auth check timeout - proceeding as guest')),
-            5000  // 5 second timeout for auth check
-          ))
-        )
+        console.log('🔄 [AUTH] Refreshing session token...')
+        const { data, error } = await supabase.auth.refreshSession()
 
-        // Race getSession against timeout
-        const sessionPromise = supabase.auth.getSession()
-        const { data: { session }, error: sessionError } = await Promise.race([
-          sessionPromise,
-          timeoutPromise as any,
-        ])
+        if (error) {
+          console.error('❌ [AUTH] Token refresh failed:', error.message)
+          // If refresh fails, user MUST logout (token is expired/invalid)
+          await supabase.auth.signOut()
+          setUser(null)
+          setLoading(false)
+          return
+        }
 
-        if (timeoutId) clearTimeout(timeoutId)
+        console.log('✅ [AUTH] Token refreshed successfully')
+      } catch (err) {
+        console.error('[AUTH] Error refreshing token:', err)
+        await supabase.auth.signOut()
+        setUser(null)
+      }
+    }
+
+    // Check auth on mount - NO TIMEOUTS
+    const checkAuth = async () => {
+      try {
+        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
 
         const authUser = session?.user
 
@@ -145,22 +149,23 @@ export function useAuth() {
             // Channel pode estar fechado
           }
         }
+
+        // Start auto-refresh: every 50 minutes (3000000 ms)
+        // Supabase default token TTL is 1 hour, so refresh at 50min is safe
+        if (!refreshIntervalId) {
+          refreshIntervalId = setInterval(() => {
+            refreshSession()
+          }, 50 * 60 * 1000)
+        }
       } catch (err) {
-        if (timeoutId) clearTimeout(timeoutId)
-        console.error('[AUTH] Auth check failed or timed out:', err instanceof Error ? err.message : String(err))
+        console.error('[AUTH] Auth check failed:', err instanceof Error ? err.message : String(err))
         setUser(null)
-        setLoading(false)  // CRITICAL: Always set loading = false to unblock UI
+        setLoading(false)
       }
     }
 
-    // Start auth check (MUST complete before dashboard redirects)
+    // Start auth check
     checkAuth()
-
-    // GLOBAL TIMEOUT: If auth check hangs, force unblock after 7 seconds
-    const globalAuthTimeoutId = setTimeout(() => {
-      console.warn('[AUTH] Global timeout: forcing loading = false to unblock UI')
-      setLoading(false)
-    }, 7000)
 
     // Listen para mudanças de auth (login, logout, etc)
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
@@ -187,6 +192,12 @@ export function useAuth() {
               // Ignorar erro de broadcast
             }
           }
+
+          // Restart refresh interval on auth change
+          if (refreshIntervalId) clearInterval(refreshIntervalId)
+          refreshIntervalId = setInterval(() => {
+            refreshSession()
+          }, 50 * 60 * 1000)
         } else {
           setUser(null)
 
@@ -200,6 +211,12 @@ export function useAuth() {
               // Ignorar erro de broadcast
             }
           }
+
+          // Stop refresh interval when user logs out
+          if (refreshIntervalId) {
+            clearInterval(refreshIntervalId)
+            refreshIntervalId = null
+          }
         }
       } catch (err) {
         console.error('[AUTH] Error in auth state change handler:', err)
@@ -210,7 +227,7 @@ export function useAuth() {
     // Cleanup
     return () => {
       subscription?.unsubscribe()
-      clearTimeout(globalAuthTimeoutId)
+      if (refreshIntervalId) clearInterval(refreshIntervalId)
       try {
         broadcastChannelRef.current?.close()
       } catch (err) {

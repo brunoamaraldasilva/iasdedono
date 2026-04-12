@@ -38,14 +38,6 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
         setIsLoadingMessages(true)
         setError(null)
 
-        // TIMEOUT PROTECTION: If queries hang, fail gracefully instead of infinite loading
-        const timeoutPromise = new Promise((_, reject) =>
-          setTimeout(
-            () => reject(new Error('Timeout loading conversation (check your internet connection)')),
-            8000
-          )
-        )
-
         // Get conversation first (needed for agent_id)
         const conversationPromise = supabase
           .from('conversations')
@@ -53,10 +45,7 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
           .eq('id', conversationId)
           .single()
 
-        const { data: conversation, error: convError } = await Promise.race([
-          conversationPromise,
-          timeoutPromise as any,
-        ])
+        const { data: conversation, error: convError } = await conversationPromise
 
         if (convError) throw convError
         if (!conversation) {
@@ -82,13 +71,10 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
           .eq('conversation_id', conversationId)
           .order('created_at', { ascending: true })
 
-        // Wait for both in parallel WITH TIMEOUT
-        const [agentResult, messagesResult] = await Promise.race([
-          Promise.all([
-            loadAgentPromise,
-            loadMessagesPromise,
-          ]),
-          timeoutPromise as any,
+        // Wait for both in parallel
+        const [agentResult, messagesResult] = await Promise.all([
+          loadAgentPromise,
+          loadMessagesPromise,
         ])
 
         const { data: agentData, error: agentError } = agentResult
@@ -173,18 +159,9 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
 
     loadConversation()
 
-    // FALLBACK: If nothing completes in 10 seconds, show timeout error
-    const globalTimeoutId = setTimeout(() => {
-      if (isMountedRef.current && !isLoadingMessages) {
-        console.error('[CHAT] Global timeout: conversation loading took >10s')
-        setError('Desculpe, a conversa está demorando muito para carregar. Tente recarregar a página.')
-      }
-    }, 10000)
-
     // Cleanup function
     return () => {
       isMountedRef.current = false
-      clearTimeout(globalTimeoutId)
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe()
         subscriptionRef.current = null
