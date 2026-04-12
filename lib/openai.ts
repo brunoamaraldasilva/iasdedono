@@ -243,7 +243,7 @@ export async function* generateChatResponseRawStream(
   if (!apiKey) throw new Error('OPENAI_API_KEY not set')
 
   try {
-    // Build the same tool-calling loop, but use raw streaming for final response
+    // Build system prompt with tool instructions
     const systemWithInstructions = systemPrompt + `
 
 ## Web Search & Scraping
@@ -265,14 +265,18 @@ End with: ---
     ]
 
     let continueLoop = true
+    let iterationCount = 0
+
     while (continueLoop) {
       continueLoop = false
+      iterationCount++
 
-      // Make initial request with tools enabled (non-streaming)
-      console.log('[OPENAI-RAW] 🚀 Starting FIRST FETCH (tool check request)')
-      const toolFetchStart = Date.now()
+      // OPTIMIZATION: Skip tool-checking phase, go straight to streaming
+      // This eliminates the 38-second delay from a separate tool-checking API call
+      console.log(`[OPENAI-RAW] 🚀 Making streaming request (iteration ${iterationCount}, messages: ${requestMessages.length})`)
+      const streamStartTime = Date.now()
 
-      const toolResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -324,162 +328,136 @@ End with: ---
             },
           ],
           tool_choice: 'auto',
+          stream: true,
         }),
       })
 
-      const toolFetchDuration = Date.now() - toolFetchStart
-      console.log(`[OPENAI-RAW] ⏱️ FIRST FETCH completed in ${toolFetchDuration}ms (status: ${toolResponse.status})`)
+      const streamFetchDuration = Date.now() - streamStartTime
+      console.log(`[OPENAI-RAW] ⏱️ Streaming request initialized in ${streamFetchDuration}ms (status: ${streamResponse.status})`)
 
-      if (!toolResponse.ok) {
-        throw new Error(`OpenAI API error: ${toolResponse.statusText}`)
+      if (!streamResponse.ok) {
+        throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
       }
 
-      const jsonParseStart = Date.now()
-      const choice = (await toolResponse.json()).choices[0]
-      const jsonParseDuration = Date.now() - jsonParseStart
-      console.log(`[OPENAI-RAW] ⏱️ JSON parse completed in ${jsonParseDuration}ms`)
+      const reader = streamResponse.body!.getReader()
+      const decoder = new TextDecoder()
+      let buffer = ''
+      let chunkCount = 0
+      let totalContent = ''
+      const firstReadStartTime = Date.now()
+      let firstReadDone = false
+      let toolCallBuffer: any = null
 
-      const message = choice.message
+      try {
+        while (true) {
+          const readStartTime = Date.now()
+          const { done, value } = await reader.read()
+          const readEndTime = Date.now()
 
-      // Handle tool calls
-      if (choice.finish_reason === 'tool_calls' && message.tool_calls && message.tool_calls.length > 0) {
-        console.log('🔧 [OPENAI-RAW] Agent is calling tools:', message.tool_calls.map((tc: any) => tc.function.name))
-
-        requestMessages.push({
-          role: 'assistant',
-          content: message.content || '',
-          tool_calls: message.tool_calls,
-        })
-
-        for (const toolCall of message.tool_calls) {
-          try {
-            if (!('function' in toolCall)) {
-              console.warn('[WARN] [OPENAI-RAW] Tool call missing function')
-              continue
-            }
-
-            const toolInput = JSON.parse(toolCall.function.arguments)
-            const toolResult = await onToolCall!(toolCall.function.name, toolInput)
-
-            requestMessages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: toolResult,
-            })
-
-            console.log('[OK] [OPENAI-RAW] Tool ' + toolCall.function.name + ' executed')
-          } catch (toolError) {
-            console.error('[ERROR] [OPENAI-RAW] Tool error:', toolError)
-            requestMessages.push({
-              role: 'tool',
-              tool_call_id: toolCall.id,
-              content: 'Error: ' + (toolError instanceof Error ? toolError.message : 'Unknown'),
-            })
+          if (!firstReadDone) {
+            firstReadDone = true
+            console.log(`[OPENAI-RAW] ⏱️ FIRST reader.read() took ${readEndTime - firstReadStartTime}ms to return`)
           }
-        }
 
-        continueLoop = true
-      } else {
-        // No tool calls - use raw streaming for final response
-        console.log('[OPENAI-RAW] 🚀 Making RAW STREAMING request (bypassing SDK buffering)')
-        const streamStartTime = Date.now()
+          if (value) {
+            console.log(`[OPENAI-RAW] 📥 reader.read() returned ${value.byteLength} bytes in ${readEndTime - readStartTime}ms`)
+          }
 
-        const streamFetchStart = Date.now()
-        const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${apiKey}`,
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            model: 'gpt-4o-mini',
-            messages: requestMessages,
-            temperature: 0.7,
-            max_tokens: 2000,
-            stream: true,
-          }),
-        })
+          if (done) break
 
-        const streamFetchDuration = Date.now() - streamFetchStart
-        console.log(`[OPENAI-RAW] ⏱️ SECOND FETCH (streaming) completed in ${streamFetchDuration}ms (status: ${streamResponse.status})`)
+          // Decode the chunk and add to buffer
+          buffer += decoder.decode(value, { stream: true })
+          const lines = buffer.split('\n')
 
-        if (!streamResponse.ok) {
-          throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
-        }
+          // Process all complete lines
+          for (let i = 0; i < lines.length - 1; i++) {
+            const line = lines[i].trim()
 
-        const reader = streamResponse.body!.getReader()
-        const decoder = new TextDecoder()
-        let buffer = ''
-        let chunkCount = 0
-        let totalContent = ''
-        const firstReadStartTime = Date.now()
-        let firstReadDone = false
+            // Skip empty lines
+            if (!line) continue
 
-        try {
-          while (true) {
-            const readStartTime = Date.now()
-            const { done, value } = await reader.read()
-            const readEndTime = Date.now()
-
-            if (!firstReadDone) {
-              firstReadDone = true
-              console.log(`[OPENAI-RAW] ⏱️ FIRST reader.read() took ${readEndTime - firstReadStartTime}ms to return`)
+            // Check for [DONE] marker
+            if (line === 'data: [DONE]') {
+              console.log('[OPENAI-RAW] ✅ Stream complete: [DONE] received')
+              break
             }
 
-            if (value) {
-              console.log(`[OPENAI-RAW] 📥 reader.read() returned ${value.byteLength} bytes in ${readEndTime - readStartTime}ms`)
-            }
+            // Parse SSE format: "data: {json}"
+            if (line.startsWith('data: ')) {
+              try {
+                const jsonStr = line.substring(6)
+                const parsed = JSON.parse(jsonStr)
 
-            if (done) break
+                // Handle tool calls (they come as complete objects in streaming)
+                const toolCalls = parsed.choices?.[0]?.message?.tool_calls
+                if (toolCalls && toolCalls.length > 0) {
+                  console.log('🔧 [OPENAI-RAW] Agent calling tools:', toolCalls.map((tc: any) => tc.function.name))
 
-            // Decode the chunk and add to buffer
-            buffer += decoder.decode(value, { stream: true })
-            const lines = buffer.split('\n')
+                  // Store the assistant message with tool calls
+                  requestMessages.push({
+                    role: 'assistant',
+                    content: parsed.choices?.[0]?.message?.content || '',
+                    tool_calls: toolCalls,
+                  })
 
-            // Process all complete lines
-            for (let i = 0; i < lines.length - 1; i++) {
-              const line = lines[i].trim()
+                  // Execute each tool call
+                  for (const toolCall of toolCalls) {
+                    try {
+                      if (!('function' in toolCall)) {
+                        console.warn('[WARN] [OPENAI-RAW] Tool call missing function')
+                        continue
+                      }
 
-              // Skip empty lines
-              if (!line) continue
+                      const toolInput = JSON.parse(toolCall.function.arguments)
+                      const toolResult = await onToolCall!(toolCall.function.name, toolInput)
 
-              // Check for [DONE] marker
-              if (line === 'data: [DONE]') {
-                console.log('[OPENAI-RAW] ✅ Stream complete: [DONE] received')
-                break
-              }
+                      requestMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: toolResult,
+                      })
 
-              // Parse SSE format: "data: {json}"
-              if (line.startsWith('data: ')) {
-                try {
-                  const jsonStr = line.substring(6)
-                  const parsed = JSON.parse(jsonStr)
-
-                  const content = parsed.choices?.[0]?.delta?.content || ''
-                  if (content) {
-                    chunkCount++
-                    totalContent += content
-                    if (chunkCount <= 5 || chunkCount % 20 === 0) {
-                      console.log(`[OPENAI-RAW] 📦 Chunk ${chunkCount}: ${content.length} chars, total: ${totalContent.length}`)
+                      console.log('[OK] [OPENAI-RAW] Tool ' + toolCall.function.name + ' executed')
+                    } catch (toolError) {
+                      console.error('[ERROR] [OPENAI-RAW] Tool error:', toolError)
+                      requestMessages.push({
+                        role: 'tool',
+                        tool_call_id: toolCall.id,
+                        content: 'Error: ' + (toolError instanceof Error ? toolError.message : 'Unknown'),
+                      })
                     }
-                    yield content
                   }
-                } catch (parseError) {
-                  // Silently skip parse errors (sometimes OpenAI sends extra whitespace)
+
+                  // Loop back to make another streaming request with tool results
+                  continueLoop = true
+                  break
                 }
+
+                // Handle regular content chunks
+                const content = parsed.choices?.[0]?.delta?.content || ''
+                if (content) {
+                  chunkCount++
+                  totalContent += content
+                  if (chunkCount <= 5 || chunkCount % 20 === 0) {
+                    console.log(`[OPENAI-RAW] 📦 Chunk ${chunkCount}: ${content.length} chars, total: ${totalContent.length}`)
+                  }
+                  yield content
+                }
+              } catch (parseError) {
+                // Silently skip parse errors (sometimes OpenAI sends extra whitespace)
               }
             }
-
-            // Keep the last incomplete line in buffer
-            buffer = lines[lines.length - 1]
           }
-        } finally {
-          reader.releaseLock()
-        }
 
-        const totalTime = Date.now() - streamStartTime
-        console.log(`[OPENAI-RAW] ✅ Raw stream complete: ${chunkCount} chunks, ${totalContent.length} chars in ${totalTime}ms`)
+          // Keep the last incomplete line in buffer
+          buffer = lines[lines.length - 1]
+        }
+      } finally {
+        reader.releaseLock()
       }
+
+      const totalTime = Date.now() - streamStartTime
+      console.log(`[OPENAI-RAW] ✅ Stream iteration ${iterationCount} complete: ${chunkCount} chunks, ${totalContent.length} chars in ${totalTime}ms`)
     }
   } catch (error) {
     console.error('[OPENAI-RAW] Error:', error)
