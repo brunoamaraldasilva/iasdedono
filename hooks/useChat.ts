@@ -264,125 +264,77 @@ export function useChat(conversationId: string) {
           throw new Error(errorMessage)
         }
 
-        const reader = response.body?.getReader()
-        if (!reader) {
+        if (!response.body) {
           throw new Error('Erro ao iniciar streaming')
         }
 
-        const decoder = new TextDecoder()
-        let sseBuffer = ''
+        // Use proper SSE stream parsing like open-webui does
+        const { EventSourceParserStream } = await import('eventsource-parser/stream')
+
+        const reader = response.body
+          .pipeThrough(new TextDecoderStream())
+          .pipeThrough(new EventSourceParserStream())
+          .getReader()
+
         let assistantContent = ''
-        let chunkCount = 0
-        const streamStartTime = Date.now()
 
-        // Render content to UI - called periodically during stream
-        const updateAssistantMessage = (content: string) => {
-          setMessages((prev) => {
-            if (assistantIndex >= prev.length) return prev
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
 
-            const updated = [...prev]
-            updated[assistantIndex] = {
-              role: 'assistant',
-              content,
+            if (done) {
+              console.log('[STREAM] Stream completed successfully')
+              break
             }
-            messagesRef.current = updated
-            return updated
-          })
-        }
 
-        // Yield to browser to allow rendering
-        const yieldToUI = async () => {
-          return new Promise<void>((resolve) => {
-            requestAnimationFrame(() => resolve())
-          })
-        }
+            if (!value) continue
 
-        let processedEvents = 0
-        const YIELD_EVERY_N_EVENTS = 5 // Yield after every 5 events to allow rendering
+            const data = value.data
 
-        while (true) {
-          const { done, value } = await reader.read()
+            // Check for completion marker
+            if (data.startsWith('[DONE]')) {
+              console.log('[STREAM] Received [DONE] marker')
+              break
+            }
 
-          if (done) {
-            console.log(
-              `[STREAM END] Total time: ${Date.now() - streamStartTime}ms, Total chunks: ${chunkCount}`
-            )
-            break
-          }
+            try {
+              const payload = JSON.parse(data) as SsePayload
 
-          const decodedText = decoder.decode(value, { stream: true })
-          sseBuffer += decodedText
-
-          const events = sseBuffer.split('\n\n')
-          sseBuffer = events.pop() || ''
-
-          // Process each event in this read batch
-          for (const rawEvent of events) {
-            const lines = rawEvent.split('\n')
-            let eventName = 'message'
-            const dataLines: string[] = []
-
-            for (const line of lines) {
-              if (line.startsWith('event:')) {
-                eventName = line.slice(6).trim()
-              } else if (line.startsWith('data:')) {
-                dataLines.push(line.slice(5).trim())
+              // Check for errors
+              if (payload.error) {
+                throw new Error(payload.error)
               }
-            }
 
-            if (dataLines.length === 0) continue
+              // Check for completion flag
+              if (payload.done) {
+                break
+              }
 
-            const dataText = dataLines.join('\n')
-            let payload: SsePayload
-
-            try {
-              payload = JSON.parse(dataText)
-            } catch {
-              continue
-            }
-
-            if (eventName === 'error' || payload.error) {
-              throw new Error(payload.error || 'Erro no streaming')
-            }
-
-            if (eventName === 'done' || payload.done) {
-              continue
-            }
-
-            if (payload.content) {
-              chunkCount++
-              assistantContent += payload.content
-              updateAssistantMessage(assistantContent)
-            }
-
-            // Periodically yield to UI to allow rendering
-            processedEvents++
-            if (processedEvents % YIELD_EVERY_N_EVENTS === 0) {
-              console.log(
-                `[STREAM YIELD] After ${processedEvents} events, yielding to UI...`
-              )
-              await yieldToUI()
-            }
-          }
-        }
-
-        if (sseBuffer.trim()) {
-          const lines = sseBuffer.split('\n')
-          const dataLines = lines
-            .filter((line) => line.startsWith('data:'))
-            .map((line) => line.slice(5).trim())
-
-          if (dataLines.length > 0) {
-            try {
-              const payload = JSON.parse(dataLines.join('\n')) as SsePayload
+              // Process content chunks
               if (payload.content) {
                 assistantContent += payload.content
-                updateAssistantMessage(assistantContent)
+                console.log(`[STREAM CHUNK] +${payload.content.length} chars (total: ${assistantContent.length})`)
+
+                // Update UI immediately with streaming content
+                setMessages((prev) => {
+                  if (assistantIndex >= prev.length) return prev
+
+                  const updated = [...prev]
+                  updated[assistantIndex] = {
+                    role: 'assistant',
+                    content: assistantContent,
+                  }
+                  messagesRef.current = updated
+                  return updated
+                })
               }
-            } catch {
-              // noop
+            } catch (parseError) {
+              console.warn('[STREAM] Failed to parse event data:', data.substring(0, 100))
+              continue
             }
           }
+        } finally {
+          reader.releaseLock()
         }
 
         if (isFirstMessage) {
