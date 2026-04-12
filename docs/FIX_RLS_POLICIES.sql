@@ -38,7 +38,7 @@ USING (true);  -- All authenticated users can read all whitelist entries
 -- Step 3: Protect write operations (only admin via service role)
 CREATE POLICY "whitelist_write_service_role"
 ON whitelist
-FOR INSERT, UPDATE, DELETE
+FOR ALL
 TO service_role
 USING (true);
 

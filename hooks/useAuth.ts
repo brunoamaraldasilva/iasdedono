@@ -176,6 +176,7 @@ export function useAuth() {
               email: session.user.email,
               name: '',
               role: 'user',
+              created_at: new Date().toISOString(),
             })
             setLoading(false)
           })
