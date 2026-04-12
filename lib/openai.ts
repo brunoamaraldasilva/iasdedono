@@ -271,12 +271,13 @@ End with: ---
       continueLoop = false
       iterationCount++
 
-      // OPTIMIZATION: Skip tool-checking phase, go straight to streaming
-      // This eliminates the 38-second delay from a separate tool-checking API call
-      console.log(`[OPENAI-RAW] 🚀 Making streaming request (iteration ${iterationCount}, messages: ${requestMessages.length})`)
-      const streamStartTime = Date.now()
+      // CRITICAL: First, do a QUICK non-streaming check for tool calls
+      // This is necessary because OpenAI doesn't reliably support tool calls during streaming
+      // This call is optimized to be fast (just checking, not generating full response)
+      console.log(`[OPENAI-RAW] 🚀 Iteration ${iterationCount}: Quick tool-check request`)
+      const toolCheckStart = Date.now()
 
-      const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+      const toolCheckResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
@@ -286,20 +287,17 @@ End with: ---
           model: 'gpt-4o-mini',
           messages: requestMessages,
           temperature: 0.7,
-          max_tokens: 2000,
+          max_tokens: 100, // OPTIMIZATION: Small max_tokens for quick tool check
           tools: [
             {
               type: 'function',
               function: {
                 name: 'web_search',
-                description: 'Search the web for current information when you need up-to-date facts, recent news, or information beyond your training data.',
+                description: 'Search the web for current information.',
                 parameters: {
                   type: 'object',
                   properties: {
-                    query: {
-                      type: 'string',
-                      description: 'The search query to send to the web search engine.',
-                    },
+                    query: { type: 'string', description: 'Search query' },
                   },
                   required: ['query'],
                 },
@@ -309,18 +307,11 @@ End with: ---
               type: 'function',
               function: {
                 name: 'web_scrape',
-                description: 'Scrape the full content of a specific URL to get detailed information.',
+                description: 'Scrape full content of a URL.',
                 parameters: {
                   type: 'object',
                   properties: {
-                    url: {
-                      type: 'string',
-                      description: 'The URL to scrape. Must be a valid HTTP(S) URL.',
-                    },
-                    selector: {
-                      type: 'string',
-                      description: 'Optional CSS selector to extract specific content.',
-                    },
+                    url: { type: 'string', description: 'The URL to scrape' },
                   },
                   required: ['url'],
                 },
@@ -328,136 +319,157 @@ End with: ---
             },
           ],
           tool_choice: 'auto',
-          stream: true,
         }),
       })
 
-      const streamFetchDuration = Date.now() - streamStartTime
-      console.log(`[OPENAI-RAW] ⏱️ Streaming request initialized in ${streamFetchDuration}ms (status: ${streamResponse.status})`)
+      const toolCheckDuration = Date.now() - toolCheckStart
+      console.log(`[OPENAI-RAW] ⏱️ Tool-check completed in ${toolCheckDuration}ms (status: ${toolCheckResponse.status})`)
 
-      if (!streamResponse.ok) {
-        throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
+      if (!toolCheckResponse.ok) {
+        throw new Error(`OpenAI API error: ${toolCheckResponse.statusText}`)
       }
 
-      const reader = streamResponse.body!.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ''
-      let chunkCount = 0
-      let totalContent = ''
-      const firstReadStartTime = Date.now()
-      let firstReadDone = false
-      let toolCallBuffer: any = null
+      const toolCheckData = await toolCheckResponse.json()
+      const choice = toolCheckData.choices[0]
 
-      try {
-        while (true) {
-          const readStartTime = Date.now()
-          const { done, value } = await reader.read()
-          const readEndTime = Date.now()
+      // Handle tool calls
+      if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls && choice.message.tool_calls.length > 0) {
+        console.log('🔧 [OPENAI-RAW] Agent is calling tools:', choice.message.tool_calls.map((tc: any) => tc.function.name))
 
-          if (!firstReadDone) {
-            firstReadDone = true
-            console.log(`[OPENAI-RAW] ⏱️ FIRST reader.read() took ${readEndTime - firstReadStartTime}ms to return`)
-          }
+        requestMessages.push({
+          role: 'assistant',
+          content: choice.message.content || '',
+          tool_calls: choice.message.tool_calls,
+        })
 
-          if (value) {
-            console.log(`[OPENAI-RAW] 📥 reader.read() returned ${value.byteLength} bytes in ${readEndTime - readStartTime}ms`)
-          }
-
-          if (done) break
-
-          // Decode the chunk and add to buffer
-          buffer += decoder.decode(value, { stream: true })
-          const lines = buffer.split('\n')
-
-          // Process all complete lines
-          for (let i = 0; i < lines.length - 1; i++) {
-            const line = lines[i].trim()
-
-            // Skip empty lines
-            if (!line) continue
-
-            // Check for [DONE] marker
-            if (line === 'data: [DONE]') {
-              console.log('[OPENAI-RAW] ✅ Stream complete: [DONE] received')
-              break
+        for (const toolCall of choice.message.tool_calls) {
+          try {
+            if (!('function' in toolCall)) {
+              console.warn('[WARN] [OPENAI-RAW] Tool call missing function')
+              continue
             }
 
-            // Parse SSE format: "data: {json}"
-            if (line.startsWith('data: ')) {
-              try {
-                const jsonStr = line.substring(6)
-                const parsed = JSON.parse(jsonStr)
+            const toolInput = JSON.parse(toolCall.function.arguments)
+            const toolResult = await onToolCall!(toolCall.function.name, toolInput)
 
-                // Handle tool calls (they come as complete objects in streaming)
-                const toolCalls = parsed.choices?.[0]?.message?.tool_calls
-                if (toolCalls && toolCalls.length > 0) {
-                  console.log('🔧 [OPENAI-RAW] Agent calling tools:', toolCalls.map((tc: any) => tc.function.name))
+            requestMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: toolResult,
+            })
 
-                  // Store the assistant message with tool calls
-                  requestMessages.push({
-                    role: 'assistant',
-                    content: parsed.choices?.[0]?.message?.content || '',
-                    tool_calls: toolCalls,
-                  })
+            console.log('[OK] [OPENAI-RAW] Tool ' + toolCall.function.name + ' executed')
+          } catch (toolError) {
+            console.error('[ERROR] [OPENAI-RAW] Tool error:', toolError)
+            requestMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: 'Error: ' + (toolError instanceof Error ? toolError.message : 'Unknown'),
+            })
+          }
+        }
 
-                  // Execute each tool call
-                  for (const toolCall of toolCalls) {
-                    try {
-                      if (!('function' in toolCall)) {
-                        console.warn('[WARN] [OPENAI-RAW] Tool call missing function')
-                        continue
-                      }
+        continueLoop = true
+      } else {
+        // No tool calls - now do the full streaming response
+        console.log('[OPENAI-RAW] 🚀 No tools needed, making full streaming request')
+        const streamStartTime = Date.now()
 
-                      const toolInput = JSON.parse(toolCall.function.arguments)
-                      const toolResult = await onToolCall!(toolCall.function.name, toolInput)
+        const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: requestMessages,
+            temperature: 0.7,
+            max_tokens: 2000,
+            stream: true,
+          }),
+        })
 
-                      requestMessages.push({
-                        role: 'tool',
-                        tool_call_id: toolCall.id,
-                        content: toolResult,
-                      })
+        const streamFetchDuration = Date.now() - streamStartTime
+        console.log(`[OPENAI-RAW] ⏱️ Streaming request initialized in ${streamFetchDuration}ms (status: ${streamResponse.status})`)
 
-                      console.log('[OK] [OPENAI-RAW] Tool ' + toolCall.function.name + ' executed')
-                    } catch (toolError) {
-                      console.error('[ERROR] [OPENAI-RAW] Tool error:', toolError)
-                      requestMessages.push({
-                        role: 'tool',
-                        tool_call_id: toolCall.id,
-                        content: 'Error: ' + (toolError instanceof Error ? toolError.message : 'Unknown'),
-                      })
+        if (!streamResponse.ok) {
+          throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
+        }
+
+        const reader = streamResponse.body!.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let chunkCount = 0
+        let totalContent = ''
+        const firstReadStartTime = Date.now()
+        let firstReadDone = false
+
+        try {
+          while (true) {
+            const readStartTime = Date.now()
+            const { done, value } = await reader.read()
+            const readEndTime = Date.now()
+
+            if (!firstReadDone) {
+              firstReadDone = true
+              console.log(`[OPENAI-RAW] ⏱️ FIRST reader.read() took ${readEndTime - firstReadStartTime}ms to return`)
+            }
+
+            if (value) {
+              console.log(`[OPENAI-RAW] 📥 reader.read() returned ${value.byteLength} bytes in ${readEndTime - readStartTime}ms`)
+            }
+
+            if (done) break
+
+            // Decode the chunk and add to buffer
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+
+            // Process all complete lines
+            for (let i = 0; i < lines.length - 1; i++) {
+              const line = lines[i].trim()
+
+              // Skip empty lines
+              if (!line) continue
+
+              // Check for [DONE] marker
+              if (line === 'data: [DONE]') {
+                console.log('[OPENAI-RAW] ✅ Stream complete: [DONE] received')
+                break
+              }
+
+              // Parse SSE format: "data: {json}"
+              if (line.startsWith('data: ')) {
+                try {
+                  const jsonStr = line.substring(6)
+                  const parsed = JSON.parse(jsonStr)
+
+                  const content = parsed.choices?.[0]?.delta?.content || ''
+                  if (content) {
+                    chunkCount++
+                    totalContent += content
+                    if (chunkCount <= 5 || chunkCount % 20 === 0) {
+                      console.log(`[OPENAI-RAW] 📦 Chunk ${chunkCount}: ${content.length} chars, total: ${totalContent.length}`)
                     }
+                    yield content
                   }
-
-                  // Loop back to make another streaming request with tool results
-                  continueLoop = true
-                  break
+                } catch (parseError) {
+                  // Silently skip parse errors
                 }
-
-                // Handle regular content chunks
-                const content = parsed.choices?.[0]?.delta?.content || ''
-                if (content) {
-                  chunkCount++
-                  totalContent += content
-                  if (chunkCount <= 5 || chunkCount % 20 === 0) {
-                    console.log(`[OPENAI-RAW] 📦 Chunk ${chunkCount}: ${content.length} chars, total: ${totalContent.length}`)
-                  }
-                  yield content
-                }
-              } catch (parseError) {
-                // Silently skip parse errors (sometimes OpenAI sends extra whitespace)
               }
             }
+
+            // Keep the last incomplete line in buffer
+            buffer = lines[lines.length - 1]
           }
-
-          // Keep the last incomplete line in buffer
-          buffer = lines[lines.length - 1]
+        } finally {
+          reader.releaseLock()
         }
-      } finally {
-        reader.releaseLock()
-      }
 
-      const totalTime = Date.now() - streamStartTime
-      console.log(`[OPENAI-RAW] ✅ Stream iteration ${iterationCount} complete: ${chunkCount} chunks, ${totalContent.length} chars in ${totalTime}ms`)
+        const totalTime = Date.now() - streamStartTime
+        console.log(`[OPENAI-RAW] ✅ Stream iteration ${iterationCount} complete: ${chunkCount} chunks, ${totalContent.length} chars in ${totalTime}ms`)
+      }
     }
   } catch (error) {
     console.error('[OPENAI-RAW] Error:', error)
