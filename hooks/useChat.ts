@@ -275,53 +275,48 @@ export function useChat(conversationId: string) {
         let chunkCount = 0
         const streamStartTime = Date.now()
 
-        // Accumulate content in ref, schedule single render per frame with requestAnimationFrame
-        let pendingContentRef = assistantContent
-        let frameScheduledRef = false
+        // Render content to UI - called periodically during stream
+        const updateAssistantMessage = (content: string) => {
+          setMessages((prev) => {
+            if (assistantIndex >= prev.length) return prev
 
-        const applyAssistantContent = (nextContent: string) => {
-          pendingContentRef = nextContent
-
-          // Only schedule ONE render per frame, not one per chunk
-          if (!frameScheduledRef) {
-            frameScheduledRef = true
-            requestAnimationFrame(() => {
-              frameScheduledRef = false
-              setMessages((prev) => {
-                if (assistantIndex >= prev.length) return prev
-
-                const updated = [...prev]
-                updated[assistantIndex] = {
-                  role: 'assistant',
-                  content: pendingContentRef,
-                }
-                messagesRef.current = updated
-                return updated
-              })
-            })
-          }
+            const updated = [...prev]
+            updated[assistantIndex] = {
+              role: 'assistant',
+              content,
+            }
+            messagesRef.current = updated
+            return updated
+          })
         }
 
+        // Yield to browser to allow rendering
+        const yieldToUI = async () => {
+          return new Promise<void>((resolve) => {
+            requestAnimationFrame(() => resolve())
+          })
+        }
+
+        let processedEvents = 0
+        const YIELD_EVERY_N_EVENTS = 5 // Yield after every 5 events to allow rendering
+
         while (true) {
-          const readStartTime = performance.now()
           const { done, value } = await reader.read()
-          const readEndTime = performance.now()
 
           if (done) {
-            console.log(`[STREAM END] Total time: ${Date.now() - streamStartTime}ms, Total chunks parsed: ${chunkCount}`)
+            console.log(
+              `[STREAM END] Total time: ${Date.now() - streamStartTime}ms, Total chunks: ${chunkCount}`
+            )
             break
           }
 
           const decodedText = decoder.decode(value, { stream: true })
-          console.log(`[STREAM READ] #${chunkCount} raw bytes: ${value.byteLength}, decoded: ${decodedText.length} chars, read took ${(readEndTime - readStartTime).toFixed(2)}ms`)
-
           sseBuffer += decodedText
 
           const events = sseBuffer.split('\n\n')
           sseBuffer = events.pop() || ''
 
-          console.log(`[STREAM PARSE] Found ${events.length} complete SSE events in this read cycle`)
-
+          // Process each event in this read batch
           for (const rawEvent of events) {
             const lines = rawEvent.split('\n')
             let eventName = 'message'
@@ -343,7 +338,6 @@ export function useChat(conversationId: string) {
             try {
               payload = JSON.parse(dataText)
             } catch {
-              console.warn('[STREAM PARSE ERROR] Failed to parse JSON:', dataText.substring(0, 100))
               continue
             }
 
@@ -352,16 +346,22 @@ export function useChat(conversationId: string) {
             }
 
             if (eventName === 'done' || payload.done) {
-              console.log('[STREAM DONE EVENT] Received done marker')
               continue
             }
 
             if (payload.content) {
               chunkCount++
               assistantContent += payload.content
-              const elapsed = Date.now() - streamStartTime
-              console.log(`[STREAM CHUNK ${chunkCount}] +${payload.content.length} chars (total: ${assistantContent.length}) @ ${elapsed}ms`)
-              applyAssistantContent(assistantContent)
+              updateAssistantMessage(assistantContent)
+            }
+
+            // Periodically yield to UI to allow rendering
+            processedEvents++
+            if (processedEvents % YIELD_EVERY_N_EVENTS === 0) {
+              console.log(
+                `[STREAM YIELD] After ${processedEvents} events, yielding to UI...`
+              )
+              await yieldToUI()
             }
           }
         }
