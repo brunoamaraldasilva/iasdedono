@@ -271,16 +271,33 @@ export function useChat(conversationId: string) {
         // Use proper SSE stream parsing like open-webui does
         const { EventSourceParserStream } = await import('eventsource-parser/stream')
 
+        const streamSetupTime = Date.now()
+        const t0 = new Date().toISOString().split('T')[1]
+        console.log(`[STREAM-SETUP] Starting SSE parsing at ${t0}`)
+
         const reader = response.body
           .pipeThrough(new TextDecoderStream())
           .pipeThrough(new EventSourceParserStream())
           .getReader()
 
+        console.log(`[STREAM-SETUP] Reader created in ${Date.now() - streamSetupTime}ms`)
+
         let assistantContent = ''
+        let firstChunkAt = 0
+        let readCount = 0
 
         try {
           while (true) {
+            const readStart = Date.now()
             const { done, value } = await reader.read()
+            const readDuration = Date.now() - readStart
+            readCount++
+
+            // Log first few reads and slow reads
+            if (readCount <= 5 || readDuration > 100) {
+              const t1 = new Date().toISOString().split('T')[1]
+              console.log(`[STREAM-READ] #${readCount}: done=${done}, hasVal=${!!value}, time=${readDuration}ms @${t1}`)
+            }
 
             if (done) {
               console.log('[STREAM] Stream completed successfully')
@@ -312,6 +329,13 @@ export function useChat(conversationId: string) {
 
               // Process content chunks
               if (payload.content) {
+                if (!firstChunkAt) {
+                  firstChunkAt = Date.now()
+                  const timeToFirstChunk = firstChunkAt - streamSetupTime
+                  const t2 = new Date().toISOString().split('T')[1]
+                  console.log(`[🎯 FIRST-CHUNK] ${timeToFirstChunk}ms after setup @${t2}`)
+                }
+
                 assistantContent += payload.content
                 console.log(`[STREAM CHUNK] +${payload.content.length} chars (total: ${assistantContent.length})`)
 

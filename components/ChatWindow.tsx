@@ -160,29 +160,74 @@ export function ChatWindow({
                 >
                   {msg.role === 'assistant' ? (
                     <div>
-                      {(() => {
-                        // 🔬 Log every render of this component
-                        const ts = new Date().toISOString().split('T')[1]
-                        console.log(`[COMPONENT RENDER] Assistant index=${index}, length=${msg.content.length}, @${ts}`)
-                        return null
-                      })()}
                       <div
                         ref={(el) => {
                           if (el && index === messages.length - 1) {
                             contentElementRef.current = el
                           }
                         }}
-                        className="text-xs md:text-sm break-words"
+                        className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none"
                       >
-                        {/* 🔬 DIAGNOSTIC TEST: Raw text rendering to isolate markdown performance issue */}
-                        {process.env.NODE_ENV === 'development' && (
-                          <div style={{ fontSize: '0.7em', color: '#666', marginBottom: '0.5rem', fontFamily: 'monospace' }}>
-                            [{msg.content.length} chars]
-                          </div>
-                        )}
-                        <pre className="whitespace-pre-wrap word-wrap break-words text-xs" style={{ fontFamily: 'inherit', maxHeight: '600px', overflow: 'auto' }}>
-                          {getMessageContentWithoutSources(msg.content)}
-                        </pre>
+                        <ReactMarkdown
+                          remarkPlugins={[remarkGfm]}
+                          children={getMessageContentWithoutSources(msg.content)}
+                          components={{
+                          p: ({ node, ...props }) => (
+                            <p className="mb-2 last:mb-0" {...props} />
+                          ),
+                          ul: ({ node, ...props }) => (
+                            <ul className="list-disc pl-5 mb-2 space-y-1" {...props} />
+                          ),
+                          ol: ({ node, ...props }) => (
+                            <ol className="list-decimal pl-5 mb-2 space-y-1" {...props} />
+                          ),
+                          li: ({ node, ...props }) => (
+                            <li className="text-sm" {...props} />
+                          ),
+                          code: ({ node, inline, ...props }: any) =>
+                            inline ? (
+                              <code
+                                className="bg-gray-700 px-1 rounded text-xs"
+                                {...props}
+                              />
+                            ) : (
+                              <code className="block bg-gray-700 p-2 rounded my-2 text-xs overflow-x-auto" {...props} />
+                            ),
+                          strong: ({ node, ...props }) => (
+                            <strong className="font-bold" {...props} />
+                          ),
+                          em: ({ node, ...props }) => (
+                            <em className="italic" {...props} />
+                          ),
+                          h1: ({ node, ...props }) => (
+                            <h1 className="text-lg font-bold mb-2" {...props} />
+                          ),
+                          h2: ({ node, ...props }) => (
+                            <h2 className="text-base font-bold mb-2" {...props} />
+                          ),
+                          h3: ({ node, ...props }) => (
+                            <h3 className="text-sm font-bold mb-1" {...props} />
+                          ),
+                          table: ({ node, ...props }) => (
+                            <table className="w-full border-collapse border border-gray-600 my-2 text-xs" {...props} />
+                          ),
+                          thead: ({ node, ...props }) => (
+                            <thead className="bg-gray-700" {...props} />
+                          ),
+                          tbody: ({ node, ...props }) => (
+                            <tbody {...props} />
+                          ),
+                          tr: ({ node, ...props }) => (
+                            <tr className="border border-gray-600" {...props} />
+                          ),
+                          th: ({ node, ...props }) => (
+                            <th className="border border-gray-600 px-2 py-1 text-left font-bold bg-gray-700" {...props} />
+                          ),
+                          td: ({ node, ...props }) => (
+                            <td className="border border-gray-600 px-2 py-1" {...props} />
+                          ),
+                        }}
+                      />
                       </div>
                       {/* Display sources if present */}
                       {messageSources.has(index) && messageSources.get(index)!.length > 0 && (
