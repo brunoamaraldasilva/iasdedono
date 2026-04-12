@@ -88,7 +88,96 @@ export async function GET(request: NextRequest) {
     const totalSetupTime = Date.now() - requestStartTime
     console.log(`🎯 [CHAT-STREAM] Starting SSE stream for message: "${message.substring(0, 50)}" (setup took ${totalSetupTime}ms)`)
 
-    // Create SSE stream
+    // ⚡ CRITICAL FIX: Load context/messages BEFORE ReadableStream
+    // Root cause: These queries inside ReadableStream.start() block HTTP response start (40+ sec TTFB!)
+    // Solution: Execute now, then create ReadableStream immediately
+    console.log(`📍 [CHAT-STREAM] Pre-loading context & messages (moving out of ReadableStream start)...`)
+    const preloadStart = Date.now()
+
+    // Load business context
+    let systemPrompt = agent.system_prompt || 'Você é um assistente útil.'
+    if (userId) {
+      const { data: context } = await supabase
+        .from('business_context')
+        .select('*')
+        .eq('user_id', userId)
+        .single()
+
+      if (context) {
+        // Build context from all fields
+        const contextParts = []
+        if (context.business_name) contextParts.push(`Nome: ${context.business_name}`)
+        if (context.business_type) contextParts.push(`Tipo: ${context.business_type}`)
+        if (context.revenue) contextParts.push(`Faturamento: ${context.revenue}`)
+        if (context.team_size) contextParts.push(`Tamanho do time: ${context.team_size}`)
+        if (context.goals) contextParts.push(`Objetivos: ${context.goals}`)
+        if (context.challenges) contextParts.push(`Desafios: ${context.challenges}`)
+        if (context.additional_info) contextParts.push(`Outras informações: ${context.additional_info}`)
+
+        if (contextParts.length > 0) {
+          systemPrompt += `\n\n## Contexto do Negócio do Usuário:\n${contextParts.join('\n')}`
+        }
+      }
+    }
+
+    // Get recent messages for context
+    const { data: recentMessages } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(7)
+
+    const chatMessages = (recentMessages || [])
+      .reverse()
+      .map((msg: any) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      }))
+
+    // Add current message
+    chatMessages.push({ role: 'user', content: message })
+
+    // Check cache BEFORE creating ReadableStream
+    const queryHash = generateQueryHash(message, conversationId, agentId)
+    const cachedResponse = await getCachedResponse(queryHash)
+
+    console.log(`⏱️  [CHAT-STREAM] Pre-load complete in ${Date.now() - preloadStart}ms`)
+
+    // Fast path: cached response (no streaming overhead)
+    if (cachedResponse) {
+      console.log(`⚡ [CHAT-STREAM] Cache HIT - returning cached response`)
+      const encoder = new TextEncoder()
+
+      const cachedReadable = new ReadableStream({
+        start(controller) {
+          try {
+            const chunkSize = 20
+            for (let i = 0; i < cachedResponse.length; i += chunkSize) {
+              const chunk = cachedResponse.substring(i, i + chunkSize)
+              controller.enqueue(encoder.encode(`data: ${JSON.stringify({ content: chunk })}\n\n`))
+            }
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            controller.close()
+          } catch (error) {
+            console.error('[CHAT-STREAM] Cached error:', error)
+            controller.close()
+          }
+        },
+      })
+
+      return new Response(cachedReadable, {
+        status: 200,
+        headers: {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+      })
+    }
+
+    // Slow path: stream new response
     const encoder = new TextEncoder()
     let fullResponse = ''
     let firstChunkSent = false
@@ -97,55 +186,7 @@ export async function GET(request: NextRequest) {
     const customReadable = new ReadableStream({
       async start(controller) {
         try {
-          // Build system prompt
-          let systemPrompt = agent.system_prompt || 'Você é um assistente útil.'
-
-          // Add business context if available
-          if (userId) {
-            const { data: context } = await supabase
-              .from('business_context')
-              .select('*')
-              .eq('user_id', userId)
-              .single()
-
-            if (context) {
-              // Build context from all fields
-              const contextParts = []
-              if (context.business_name) contextParts.push(`Nome: ${context.business_name}`)
-              if (context.business_type) contextParts.push(`Tipo: ${context.business_type}`)
-              if (context.revenue) contextParts.push(`Faturamento: ${context.revenue}`)
-              if (context.team_size) contextParts.push(`Tamanho do time: ${context.team_size}`)
-              if (context.goals) contextParts.push(`Objetivos: ${context.goals}`)
-              if (context.challenges) contextParts.push(`Desafios: ${context.challenges}`)
-              if (context.additional_info) contextParts.push(`Outras informações: ${context.additional_info}`)
-
-              if (contextParts.length > 0) {
-                systemPrompt += `\n\n## Contexto do Negócio do Usuário:\n${contextParts.join('\n')}`
-              }
-            }
-          }
-
-          // Get recent messages for context
-          const { data: recentMessages } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('conversation_id', conversationId)
-            .order('created_at', { ascending: false })
-            .limit(7)
-
-          const chatMessages = (recentMessages || [])
-            .reverse()
-            .map((msg: any) => ({
-              role: msg.role as 'user' | 'assistant',
-              content: msg.content,
-            }))
-
-          // Add current message
-          chatMessages.push({ role: 'user', content: message })
-
-          // Check cache
-          const queryHash = generateQueryHash(message, conversationId, agentId)
-          const cachedResponse = await getCachedResponse(queryHash)
+          // Pre-loading already done above, now just handle streaming
 
           if (cachedResponse) {
             console.log(`⚡ [CHAT-STREAM] Cache HIT - sending cached response as SSE`)
