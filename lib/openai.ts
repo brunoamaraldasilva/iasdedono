@@ -395,10 +395,24 @@ End with: ---
         let buffer = ''
         let chunkCount = 0
         let totalContent = ''
+        const firstReadStartTime = Date.now()
+        let firstReadDone = false
 
         try {
           while (true) {
+            const readStartTime = Date.now()
             const { done, value } = await reader.read()
+            const readEndTime = Date.now()
+
+            if (!firstReadDone) {
+              firstReadDone = true
+              console.log(`[OPENAI-RAW] ⏱️ FIRST reader.read() took ${readEndTime - firstReadStartTime}ms to return`)
+            }
+
+            if (value) {
+              console.log(`[OPENAI-RAW] 📥 reader.read() returned ${value.byteLength} bytes in ${readEndTime - readStartTime}ms`)
+            }
+
             if (done) break
 
             // Decode the chunk and add to buffer
