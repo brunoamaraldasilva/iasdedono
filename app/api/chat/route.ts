@@ -106,6 +106,52 @@ export async function POST(request: NextRequest) {
       })
     }
 
+    // ⚡ CRITICAL FIX: Load context/messages BEFORE ReadableStream
+    // Root cause: These queries inside ReadableStream.start() block HTTP response start (24+ sec delay!)
+    // Solution: Execute now, then create ReadableStream immediately
+    let systemPrompt = agent.system_prompt || 'Você é um assistente útil.'
+    if (userId) {
+      const { data: context } = await supabase
+        .from('business_context')
+        .select('*')
+        .eq('user_id', userId)
+        .single()
+
+      if (context) {
+        const contextParts: string[] = []
+        if (context.business_name) contextParts.push(`Nome: ${context.business_name}`)
+        if (context.business_type) contextParts.push(`Tipo: ${context.business_type}`)
+        if (context.revenue) contextParts.push(`Faturamento: ${context.revenue}`)
+        if (context.team_size) contextParts.push(`Tamanho do time: ${context.team_size}`)
+        if (context.goals) contextParts.push(`Objetivos: ${context.goals}`)
+        if (context.challenges) contextParts.push(`Desafios: ${context.challenges}`)
+        if (context.additional_info) contextParts.push(`Outras informações: ${context.additional_info}`)
+
+        if (contextParts.length > 0) {
+          systemPrompt += `\n\n## Contexto do Negócio do Usuário:\n${contextParts.join('\n')}`
+        }
+      }
+    }
+
+    const { data: recentMessages } = await supabase
+      .from('messages')
+      .select('*')
+      .eq('conversation_id', conversationId)
+      .order('created_at', { ascending: false })
+      .limit(7)
+
+    const chatMessages = (recentMessages || [])
+      .reverse()
+      .map((msg: any) => ({
+        role: msg.role as 'user' | 'assistant',
+        content: msg.content,
+      }))
+
+    chatMessages.push({ role: 'user', content: message })
+
+    const queryHash = generateQueryHash(message, conversationId, agentId)
+    const cachedResponse = await getCachedResponse(queryHash)
+
     const encoder = new TextEncoder()
     let fullResponse = ''
     const streamStartTime = Date.now()
@@ -119,47 +165,6 @@ export async function POST(request: NextRequest) {
         }
 
         try {
-          let systemPrompt = agent.system_prompt || 'Você é um assistente útil.'
-
-          const { data: context } = await supabase
-            .from('business_context')
-            .select('*')
-            .eq('user_id', userId)
-            .single()
-
-          if (context) {
-            const contextParts: string[] = []
-            if (context.business_name) contextParts.push(`Nome: ${context.business_name}`)
-            if (context.business_type) contextParts.push(`Tipo: ${context.business_type}`)
-            if (context.revenue) contextParts.push(`Faturamento: ${context.revenue}`)
-            if (context.team_size) contextParts.push(`Tamanho do time: ${context.team_size}`)
-            if (context.goals) contextParts.push(`Objetivos: ${context.goals}`)
-            if (context.challenges) contextParts.push(`Desafios: ${context.challenges}`)
-            if (context.additional_info) contextParts.push(`Outras informações: ${context.additional_info}`)
-
-            if (contextParts.length > 0) {
-              systemPrompt += `\n\n## Contexto do Negócio do Usuário:\n${contextParts.join('\n')}`
-            }
-          }
-
-          const { data: recentMessages } = await supabase
-            .from('messages')
-            .select('*')
-            .eq('conversation_id', conversationId)
-            .order('created_at', { ascending: false })
-            .limit(7)
-
-          const chatMessages = (recentMessages || [])
-            .reverse()
-            .map((msg: any) => ({
-              role: msg.role as 'user' | 'assistant',
-              content: msg.content,
-            }))
-
-          chatMessages.push({ role: 'user', content: message })
-
-          const queryHash = generateQueryHash(message, conversationId, agentId)
-          const cachedResponse = await getCachedResponse(queryHash)
 
           if (cachedResponse) {
             const chunkSize = 20
@@ -167,7 +172,6 @@ export async function POST(request: NextRequest) {
             for (let i = 0; i < cachedResponse.length; i += chunkSize) {
               const chunk = cachedResponse.substring(i, i + chunkSize)
               sendSse({ content: chunk })
-              await new Promise((resolve) => setTimeout(resolve, 10))
             }
 
             sendSse({ done: true }, 'done')
