@@ -6,6 +6,10 @@ import { scrapeUrl, isValidUrl, extractUrls } from '@/lib/webscraper'
 import { rateLimit } from '@/lib/rateLimit'
 import { generateQueryHash, getCachedResponse, cacheResponse } from '@/lib/chatCache'
 
+// CRITICAL: Declare route as dynamic to prevent caching/prerendering
+export const dynamic = 'force-dynamic'
+export const runtime = 'nodejs'
+
 // Server-side admin client for updating conversations
 function createAdminSupabaseClient() {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
@@ -275,13 +279,14 @@ export async function GET(request: NextRequest) {
       },
     })
 
-    // Return SSE response
+    // Return SSE response with anti-buffering headers
     return new Response(customReadable, {
       status: 200,
       headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
+        'Content-Type': 'text/event-stream; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
         'Connection': 'keep-alive',
+        'X-Accel-Buffering': 'no',
       },
     })
   } catch (error) {
