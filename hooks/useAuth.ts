@@ -18,6 +18,8 @@ export function useAuth() {
     if (initCheckRef.current) return
     initCheckRef.current = true
 
+    console.log('[AUTH-PHASE-1] useEffect hook started')
+
     let refreshIntervalId: NodeJS.Timeout | null = null
 
     // Setup BroadcastChannel para sync entre abas
@@ -36,37 +38,49 @@ export function useAuth() {
 
     // Função para verificar se usuário está ativo (whitelist)
     const checkUserStatus = async (userEmail?: string): Promise<boolean> => {
-      if (!userEmail) return true
+      console.log('[WHITELIST-CHECK] Starting for email:', userEmail)
+      if (!userEmail) {
+        console.log('[WHITELIST-CHECK] No email provided, returning true')
+        return true
+      }
 
       try {
+        console.log('[WHITELIST-CHECK] Querying whitelist table...')
         const { data: whitelistEntry } = await supabase
           .from('whitelist')
           .select('status')
           .eq('email', userEmail.toLowerCase())
           .maybeSingle()
 
+        console.log('[WHITELIST-CHECK] Query complete, entry:', whitelistEntry)
         if (whitelistEntry?.status === 'inactive') {
           console.warn('🔐 [AUTH] User is inactive:', userEmail)
           return false
         }
+        console.log('[WHITELIST-CHECK] User is active, returning true')
         return true
       } catch (err) {
-        console.error('[AUTH] Error checking user status:', err)
+        console.error('[WHITELIST-CHECK] Error:', err)
         return true
       }
     }
 
     // Função simples para carregar dados do usuário
     const loadUserData = async (userId: string, userEmail?: string) => {
+      console.log('[LOAD-USER-DATA] Starting for userId:', userId)
       try {
+        console.log('[LOAD-USER-DATA] Querying users table...')
         const { data: userData, error: dbError } = await supabase
           .from('users')
           .select('*')
           .eq('id', userId)
           .single()
 
+        console.log('[LOAD-USER-DATA] Query complete, error:', dbError?.code, 'data:', !!userData)
+
         if (dbError) {
           if (dbError.code === 'PGRST116') {
+            console.log('[LOAD-USER-DATA] User not found, creating...')
             const { error: createError } = await supabase
               .from('users')
               .insert({
@@ -77,14 +91,16 @@ export function useAuth() {
               })
 
             if (createError) throw createError
+            console.log('[LOAD-USER-DATA] User created, recursing...')
             return loadUserData(userId)
           }
           throw dbError
         }
 
+        console.log('[LOAD-USER-DATA] Returning user data')
         return userData
       } catch (err) {
-        console.error('Error loading user data:', err)
+        console.error('[LOAD-USER-DATA] Error:', err)
         return null
       }
     }
@@ -118,22 +134,29 @@ export function useAuth() {
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       try {
         // Log auth event for debugging
+        console.log(`[AUTH-CALLBACK] Event: ${event}, Has session: ${!!session}, Has user: ${!!session?.user}`)
         if (event === 'INITIAL_SESSION') {
           console.log('[AUTH] Initial session loaded from cookies (no HTTP request)')
         }
 
         if (session?.user) {
+          console.log('[AUTH-PATH-A] User is logged in, email:', session.user.email)
           const isActive = await checkUserStatus(session.user.email)
+          console.log('[AUTH-PATH-A] isActive check complete:', isActive)
           if (!isActive) {
             console.warn('🔐 [AUTH] User is inactive, logging out')
             await supabase.auth.signOut()
             setUser(null)
+            console.log('[AUTH-PATH-A1] setLoading(false) - INACTIVE USER')
             setLoading(false)
             return
           }
 
+          console.log('[AUTH-PATH-A] About to load user data...')
           const userData = await loadUserData(session.user.id, session.user.email)
+          console.log('[AUTH-PATH-A] User data loaded:', !!userData)
           setUser(userData)
+          console.log('[AUTH-PATH-A2] setLoading(false) - LOGGED IN')
           setLoading(false)
 
           if (broadcastChannelRef.current) {
@@ -155,7 +178,9 @@ export function useAuth() {
             }, 50 * 60 * 1000)
           }
         } else {
+          console.log('[AUTH-PATH-B] No session, user not logged in')
           setUser(null)
+          console.log('[AUTH-PATH-B] setLoading(false) - NO SESSION')
           setLoading(false)
 
           if (broadcastChannelRef.current) {
@@ -176,14 +201,18 @@ export function useAuth() {
           }
         }
       } catch (err) {
-        console.error('[AUTH] Error in auth state change handler:', err)
+        console.error('[AUTH-ERROR] Caught error in auth state change handler:', err)
         setUser(null)
+        console.log('[AUTH-ERROR] setLoading(false) - EXCEPTION')
         setLoading(false)
       }
     })
 
+    console.log('[AUTH-PHASE-1] onAuthStateChange subscription set up, waiting for callback...')
+
     // Cleanup
     return () => {
+      console.log('[AUTH-CLEANUP] useEffect cleanup called')
       subscription?.unsubscribe()
       if (refreshIntervalId) clearInterval(refreshIntervalId)
       try {
