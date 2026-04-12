@@ -272,36 +272,42 @@ export function useChat(conversationId: string) {
         const decoder = new TextDecoder()
         let sseBuffer = ''
         let assistantContent = ''
+        let chunkCount = 0
+        const streamStartTime = Date.now()
 
         const applyAssistantContent = (nextContent: string) => {
-          // CRITICAL: Break React batching with setTimeout(0)
-          // This forces each chunk update into separate macrotask
-          // Without this, React 18 batches all setState calls in event listener
-          // resulting in complete response appearing all at once
-          setTimeout(() => {
-            setMessages((prev) => {
-              if (assistantIndex >= prev.length) return prev
+          setMessages((prev) => {
+            if (assistantIndex >= prev.length) return prev
 
-              const updated = [...prev]
-              updated[assistantIndex] = {
-                role: 'assistant',
-                content: nextContent,
-              }
-              messagesRef.current = updated
-              return updated
-            })
-          }, 0)
+            const updated = [...prev]
+            updated[assistantIndex] = {
+              role: 'assistant',
+              content: nextContent,
+            }
+            messagesRef.current = updated
+            return updated
+          })
         }
 
         while (true) {
+          const readStartTime = performance.now()
           const { done, value } = await reader.read()
+          const readEndTime = performance.now()
 
-          if (done) break
+          if (done) {
+            console.log(`[STREAM END] Total time: ${Date.now() - streamStartTime}ms, Total chunks parsed: ${chunkCount}`)
+            break
+          }
 
-          sseBuffer += decoder.decode(value, { stream: true })
+          const decodedText = decoder.decode(value, { stream: true })
+          console.log(`[STREAM READ] #${chunkCount} raw bytes: ${value.byteLength}, decoded: ${decodedText.length} chars, read took ${(readEndTime - readStartTime).toFixed(2)}ms`)
+
+          sseBuffer += decodedText
 
           const events = sseBuffer.split('\n\n')
           sseBuffer = events.pop() || ''
+
+          console.log(`[STREAM PARSE] Found ${events.length} complete SSE events in this read cycle`)
 
           for (const rawEvent of events) {
             const lines = rawEvent.split('\n')
@@ -324,6 +330,7 @@ export function useChat(conversationId: string) {
             try {
               payload = JSON.parse(dataText)
             } catch {
+              console.warn('[STREAM PARSE ERROR] Failed to parse JSON:', dataText.substring(0, 100))
               continue
             }
 
@@ -332,11 +339,15 @@ export function useChat(conversationId: string) {
             }
 
             if (eventName === 'done' || payload.done) {
+              console.log('[STREAM DONE EVENT] Received done marker')
               continue
             }
 
             if (payload.content) {
+              chunkCount++
               assistantContent += payload.content
+              const elapsed = Date.now() - streamStartTime
+              console.log(`[STREAM CHUNK ${chunkCount}] +${payload.content.length} chars (total: ${assistantContent.length}) @ ${elapsed}ms`)
               applyAssistantContent(assistantContent)
             }
           }
