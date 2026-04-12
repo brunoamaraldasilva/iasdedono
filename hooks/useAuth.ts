@@ -19,8 +19,6 @@ export function useAuth() {
     if (initCheckRef.current) return
     initCheckRef.current = true
 
-    console.log('[AUTH-PHASE-1] useEffect hook started')
-
     let refreshIntervalId: NodeJS.Timeout | null = null
 
     // Setup BroadcastChannel para sync entre abas
@@ -39,17 +37,9 @@ export function useAuth() {
 
     // Função para verificar se usuário está ativo (whitelist)
     const checkUserStatus = async (userEmail?: string): Promise<boolean> => {
-      console.log('[WHITELIST-CHECK] Starting for email:', userEmail)
-      if (!userEmail) {
-        console.log('[WHITELIST-CHECK] No email provided, returning true')
-        return true
-      }
+      if (!userEmail) return true
 
       try {
-        console.log('[WHITELIST-CHECK] Querying whitelist table...')
-
-        // NOTE: This now runs in background, not blocking render
-        // RLS policy fixed to allow authenticated users to read
         const { data: whitelistEntry, error } = await supabase
           .from('whitelist')
           .select('status')
@@ -57,42 +47,33 @@ export function useAuth() {
           .maybeSingle()
 
         if (error) {
-          console.error('[WHITELIST-CHECK] Query error:', error)
+          console.error('[AUTH] Whitelist check error:', error)
           return true // Fail-open
         }
 
-        console.log('[WHITELIST-CHECK] Query complete, entry:', whitelistEntry)
         if (whitelistEntry?.status === 'inactive') {
           console.warn('🔐 [AUTH] User is inactive:', userEmail)
           return false
         }
-        console.log('[WHITELIST-CHECK] User is active, returning true')
         return true
       } catch (err) {
-        console.error('[WHITELIST-CHECK] Unexpected error:', err)
+        console.error('[AUTH] Whitelist check failed:', err)
         return true // Fail-open: allow user through
       }
     }
 
     // Função simples para carregar dados do usuário
     const loadUserData = async (userId: string, userEmail?: string) => {
-      console.log('[LOAD-USER-DATA] Starting for userId:', userId)
       try {
-        console.log('[LOAD-USER-DATA] Querying users table...')
-
-        // NOTE: This now runs in background, not blocking render
-        // RLS policy fixed to allow users to read their own data
         const { data: userData, error: dbError } = await supabase
           .from('users')
           .select('*')
           .eq('id', userId)
           .single()
 
-        console.log('[LOAD-USER-DATA] Query complete, error:', dbError?.code, 'data:', !!userData)
-
         if (dbError) {
           if (dbError.code === 'PGRST116') {
-            console.log('[LOAD-USER-DATA] User not found, creating...')
+            // User not found, create entry
             const { error: createError } = await supabase
               .from('users')
               .insert({
@@ -103,16 +84,14 @@ export function useAuth() {
               })
 
             if (createError) throw createError
-            console.log('[LOAD-USER-DATA] User created, recursing...')
             return loadUserData(userId)
           }
           throw dbError
         }
 
-        console.log('[LOAD-USER-DATA] Returning user data')
         return userData
       } catch (err) {
-        console.error('[LOAD-USER-DATA] Error:', err)
+        console.error('[AUTH] Error loading user data:', err)
         // Return minimal user object on error (running in background anyway)
         return {
           id: userId,
@@ -126,19 +105,16 @@ export function useAuth() {
     // Refresh token BEFORE it expires (every 50 minutes)
     const refreshSession = async () => {
       try {
-        console.log('🔄 [AUTH] Refreshing session token...')
         const { data, error } = await supabase.auth.refreshSession()
 
         if (error) {
-          console.error('❌ [AUTH] Token refresh failed:', error.message)
+          console.error('[AUTH] Token refresh failed:', error.message)
           // If refresh fails, user MUST logout (token is expired/invalid)
           await supabase.auth.signOut()
           setUser(null)
           setLoading(false)
           return
         }
-
-        console.log('✅ [AUTH] Token refreshed successfully')
       } catch (err) {
         console.error('[AUTH] Error refreshing token:', err)
         await supabase.auth.signOut()
@@ -151,36 +127,21 @@ export function useAuth() {
     // Then continues listening for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       try {
-        // Log auth event for debugging
-        console.log(`[AUTH-CALLBACK] Event: ${event}, Has session: ${!!session}, Has user: ${!!session?.user}`)
-        if (event === 'INITIAL_SESSION') {
-          console.log('[AUTH] Initial session loaded from cookies (no HTTP request)')
-        }
-
-        // CRITICAL FIX: Only process if session ID changed (prevents infinite loops)
+        // Only process if session ID changed (prevents infinite loops on multiple events)
         // onAuthStateChange fires multiple events (SIGNED_IN, INITIAL_SESSION) for same session
-        // We only want to process each unique session once
         const currentSessionId = session?.user?.id || 'NONE'
         if (currentSessionId === processedSessionRef.current) {
-          console.log('[AUTH-GUARD] Session already processed, skipping duplicate processing')
-          return
+          return // Already processed this session
         }
         processedSessionRef.current = currentSessionId
-        console.log('[AUTH-GUARD] New session detected, processing...')
 
         if (session?.user) {
-          console.log('[AUTH-PATH-A] User is logged in, email:', session.user.email)
-
           // ✅ CRITICAL OPTIMIZATION: Render immediately, verify in background
-          // Don't block on whitelist/user data queries - they can timeout on SIGNED_IN events
-          // Set loading=false FIRST so UI renders
-          console.log('[AUTH-PATH-A-IMMEDIATE] setLoading(false) - RENDER APP NOW')
+          // Don't block on whitelist/user data queries - they run in background
           setLoading(false)
 
           // 🔄 Load user data in background (fire and forget)
-          // Don't block rendering on these queries
           loadUserData(session.user.id, session.user.email).then((userData) => {
-            console.log('[AUTH-BACKGROUND] User data loaded:', !!userData)
             setUser(userData)
 
             if (broadcastChannelRef.current) {
@@ -194,35 +155,31 @@ export function useAuth() {
               }
             }
           }).catch((err) => {
-            console.error('[AUTH-BACKGROUND] Error loading user data:', err)
+            console.error('[AUTH] Error loading user data:', err)
             // Continue anyway - user is authenticated even if data load fails
           })
 
           // 🔄 Check whitelist status in background
           checkUserStatus(session.user.email).then((isActive) => {
-            console.log('[AUTH-BACKGROUND] Whitelist check complete:', isActive)
             if (!isActive) {
               console.warn('🔐 [AUTH] User is inactive, logging out')
               supabase.auth.signOut()
               setUser(null)
             }
           }).catch((err) => {
-            console.error('[AUTH-BACKGROUND] Error checking whitelist:', err)
+            console.error('[AUTH] Error checking whitelist:', err)
             // Continue anyway - whitelist check failure shouldn't block auth
           })
 
           // Start auto-refresh: every 50 minutes
-          // Supabase default token TTL is 1 hour, so refresh at 50min is safe
           if (!refreshIntervalId) {
             refreshIntervalId = setInterval(() => {
               refreshSession()
             }, 50 * 60 * 1000)
           }
         } else {
-          console.log('[AUTH-PATH-B] No session, user not logged in')
           processedSessionRef.current = 'NONE'  // Reset for next login
           setUser(null)
-          console.log('[AUTH-PATH-B] setLoading(false) - NO SESSION')
           setLoading(false)
 
           if (broadcastChannelRef.current) {
@@ -243,18 +200,14 @@ export function useAuth() {
           }
         }
       } catch (err) {
-        console.error('[AUTH-ERROR] Caught error in auth state change handler:', err)
+        console.error('[AUTH] Unexpected error in auth handler:', err)
         setUser(null)
-        console.log('[AUTH-ERROR] setLoading(false) - EXCEPTION')
         setLoading(false)
       }
     })
 
-    console.log('[AUTH-PHASE-1] onAuthStateChange subscription set up, waiting for callback...')
-
     // Cleanup
     return () => {
-      console.log('[AUTH-CLEANUP] useEffect cleanup called')
       subscription?.unsubscribe()
       if (refreshIntervalId) clearInterval(refreshIntervalId)
       try {
