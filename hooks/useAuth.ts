@@ -112,75 +112,29 @@ export function useAuth() {
       }
     }
 
-    // Check auth on mount - NO TIMEOUTS
-    const checkAuth = async () => {
-      try {
-        const { data: { session }, error: sessionError } = await supabase.auth.getSession()
-
-        const authUser = session?.user
-
-        if (sessionError || !authUser) {
-          setUser(null)
-          console.log('[AUTH] No authenticated user found')
-          setLoading(false)
-          return
-        }
-
-        const isActive = await checkUserStatus(authUser.email)
-        if (!isActive) {
-          console.warn('🔐 [AUTH] Inactive user session, forcing logout')
-          await supabase.auth.signOut()
-          setUser(null)
-          setLoading(false)
-          return
-        }
-
-        const userData = await loadUserData(authUser.id, authUser.email)
-        setUser(userData)
-        setLoading(false)
-
-        if (broadcastChannelRef.current) {
-          try {
-            broadcastChannelRef.current.postMessage({
-              type: 'AUTH_CHANGE',
-              user: userData,
-            })
-          } catch (err) {
-            // Channel pode estar fechado
-          }
-        }
-
-        // Start auto-refresh: every 50 minutes (3000000 ms)
-        // Supabase default token TTL is 1 hour, so refresh at 50min is safe
-        if (!refreshIntervalId) {
-          refreshIntervalId = setInterval(() => {
-            refreshSession()
-          }, 50 * 60 * 1000)
-        }
-      } catch (err) {
-        console.error('[AUTH] Auth check failed:', err instanceof Error ? err.message : String(err))
-        setUser(null)
-        setLoading(false)
-      }
-    }
-
-    // Start auth check
-    checkAuth()
-
-    // Listen para mudanças de auth (login, logout, etc)
+    // CRITICAL: Use onAuthStateChange for initialization
+    // It fires IMMEDIATELY with session from browser cookies (no HTTP request needed)
+    // Then continues listening for auth state changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event: any, session: any) => {
       try {
+        // Log auth event for debugging
+        if (event === 'INITIAL_SESSION') {
+          console.log('[AUTH] Initial session loaded from cookies (no HTTP request)')
+        }
+
         if (session?.user) {
           const isActive = await checkUserStatus(session.user.email)
           if (!isActive) {
-            console.warn('🔐 [AUTH] User became inactive, logging out')
+            console.warn('🔐 [AUTH] User is inactive, logging out')
             await supabase.auth.signOut()
             setUser(null)
+            setLoading(false)
             return
           }
 
           const userData = await loadUserData(session.user.id, session.user.email)
           setUser(userData)
+          setLoading(false)
 
           if (broadcastChannelRef.current) {
             try {
@@ -189,17 +143,20 @@ export function useAuth() {
                 user: userData,
               })
             } catch (err) {
-              // Ignorar erro de broadcast
+              // Channel pode estar fechado
             }
           }
 
-          // Restart refresh interval on auth change
-          if (refreshIntervalId) clearInterval(refreshIntervalId)
-          refreshIntervalId = setInterval(() => {
-            refreshSession()
-          }, 50 * 60 * 1000)
+          // Start auto-refresh: every 50 minutes
+          // Supabase default token TTL is 1 hour, so refresh at 50min is safe
+          if (!refreshIntervalId) {
+            refreshIntervalId = setInterval(() => {
+              refreshSession()
+            }, 50 * 60 * 1000)
+          }
         } else {
           setUser(null)
+          setLoading(false)
 
           if (broadcastChannelRef.current) {
             try {
@@ -221,6 +178,7 @@ export function useAuth() {
       } catch (err) {
         console.error('[AUTH] Error in auth state change handler:', err)
         setUser(null)
+        setLoading(false)
       }
     })
 
