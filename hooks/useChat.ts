@@ -254,8 +254,6 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
         let chunkCount = 0
         let totalChars = 0
         let firstChunkReceived = false
-        let renderUpdateCounter = 0
-        const RENDER_UPDATE_INTERVAL = 10 // Update UI every 10 chunks
 
         eventSource.addEventListener('message', (event: MessageEvent) => {
           try {
@@ -321,25 +319,21 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
 
                 // Store first chunk in ref
                 streamingRef.current.set(streamId, chunk)
-                renderUpdateCounter = 1
               } else {
                 // Accumulate chunks in ref
                 const current = streamingRef.current.get(streamId) || ''
                 const newContent = current + chunk
                 streamingRef.current.set(streamId, newContent)
 
-                // Update React state periodically (every N chunks) to show streaming progress
-                renderUpdateCounter++
-                if (renderUpdateCounter % RENDER_UPDATE_INTERVAL === 0) {
-                  const updated = [...messagesRef.current]
-                  updated[assistantIndexRef.current].content = newContent
-                  messagesRef.current = updated
+                // Update React state EVERY chunk for true real-time streaming
+                const updated = [...messagesRef.current]
+                updated[assistantIndexRef.current].content = newContent
+                messagesRef.current = updated
 
-                  // Use setTimeout to break out of event listener batching
-                  setTimeout(() => {
-                    setMessages([...updated])
-                  }, 0)
-                }
+                // Use setTimeout to break out of event listener batching
+                setTimeout(() => {
+                  setMessages([...updated])
+                }, 0)
               }
 
               if (chunkCount <= 5 || chunkCount % 20 === 0) {
