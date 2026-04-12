@@ -88,11 +88,23 @@ export function useAuth() {
       console.log('[LOAD-USER-DATA] Starting for userId:', userId)
       try {
         console.log('[LOAD-USER-DATA] Querying users table...')
-        const { data: userData, error: dbError } = await supabase
+
+        // CRITICAL FIX: Add 5-second timeout to prevent hanging on SIGNED_IN events
+        // Same RLS policy issue as whitelist table
+        const queryPromise = supabase
           .from('users')
           .select('*')
           .eq('id', userId)
           .single()
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('LOAD_USER_TIMEOUT')), 5000)
+        )
+
+        const { data: userData, error: dbError } = await Promise.race([
+          queryPromise,
+          timeoutPromise,
+        ]) as any
 
         console.log('[LOAD-USER-DATA] Query complete, error:', dbError?.code, 'data:', !!userData)
 
@@ -117,9 +129,27 @@ export function useAuth() {
 
         console.log('[LOAD-USER-DATA] Returning user data')
         return userData
-      } catch (err) {
+      } catch (err: any) {
+        // Check if it's a timeout
+        if (err?.message === 'LOAD_USER_TIMEOUT') {
+          console.error('❌ [LOAD-USER-DATA] Query timeout after 5s (RLS policy issue on SIGNED_IN), returning minimal user object')
+          console.log('   User will load with minimal data. Fix: Update RLS policy on users table.')
+          // Return minimal user object to prevent white screen
+          return {
+            id: userId,
+            email: userEmail || '',
+            name: '',
+            role: 'user',
+          }
+        }
         console.error('[LOAD-USER-DATA] Error:', err)
-        return null
+        // Return minimal user object on any error to prevent white screen
+        return {
+          id: userId,
+          email: userEmail || '',
+          name: '',
+          role: 'user',
+        }
       }
     }
 
