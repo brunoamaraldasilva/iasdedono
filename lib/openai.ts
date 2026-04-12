@@ -236,6 +236,9 @@ export async function* generateChatResponseRawStream(
   messages: Array<{ role: 'user' | 'assistant'; content: string }>,
   onToolCall?: (toolName: string, toolInput: Record<string, unknown>) => Promise<string>
 ) {
+  const generatorStartTime = Date.now()
+  console.log(`[OPENAI-RAW] 📍 generateChatResponseRawStream() called with ${messages.length} messages`)
+
   const apiKey = process.env.OPENAI_API_KEY
   if (!apiKey) throw new Error('OPENAI_API_KEY not set')
 
@@ -266,6 +269,9 @@ End with: ---
       continueLoop = false
 
       // Make initial request with tools enabled (non-streaming)
+      console.log('[OPENAI-RAW] 🚀 Starting FIRST FETCH (tool check request)')
+      const toolFetchStart = Date.now()
+
       const toolResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
@@ -321,11 +327,18 @@ End with: ---
         }),
       })
 
+      const toolFetchDuration = Date.now() - toolFetchStart
+      console.log(`[OPENAI-RAW] ⏱️ FIRST FETCH completed in ${toolFetchDuration}ms (status: ${toolResponse.status})`)
+
       if (!toolResponse.ok) {
         throw new Error(`OpenAI API error: ${toolResponse.statusText}`)
       }
 
+      const jsonParseStart = Date.now()
       const choice = (await toolResponse.json()).choices[0]
+      const jsonParseDuration = Date.now() - jsonParseStart
+      console.log(`[OPENAI-RAW] ⏱️ JSON parse completed in ${jsonParseDuration}ms`)
+
       const message = choice.message
 
       // Handle tool calls
@@ -371,6 +384,7 @@ End with: ---
         console.log('[OPENAI-RAW] 🚀 Making RAW STREAMING request (bypassing SDK buffering)')
         const streamStartTime = Date.now()
 
+        const streamFetchStart = Date.now()
         const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -385,6 +399,9 @@ End with: ---
             stream: true,
           }),
         })
+
+        const streamFetchDuration = Date.now() - streamFetchStart
+        console.log(`[OPENAI-RAW] ⏱️ SECOND FETCH (streaming) completed in ${streamFetchDuration}ms (status: ${streamResponse.status})`)
 
         if (!streamResponse.ok) {
           throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
