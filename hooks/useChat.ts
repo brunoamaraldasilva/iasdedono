@@ -275,18 +275,31 @@ export function useChat(conversationId: string) {
         let chunkCount = 0
         const streamStartTime = Date.now()
 
-        const applyAssistantContent = (nextContent: string) => {
-          setMessages((prev) => {
-            if (assistantIndex >= prev.length) return prev
+        // Accumulate content in ref, schedule single render per frame with requestAnimationFrame
+        let pendingContentRef = assistantContent
+        let frameScheduledRef = false
 
-            const updated = [...prev]
-            updated[assistantIndex] = {
-              role: 'assistant',
-              content: nextContent,
-            }
-            messagesRef.current = updated
-            return updated
-          })
+        const applyAssistantContent = (nextContent: string) => {
+          pendingContentRef = nextContent
+
+          // Only schedule ONE render per frame, not one per chunk
+          if (!frameScheduledRef) {
+            frameScheduledRef = true
+            requestAnimationFrame(() => {
+              frameScheduledRef = false
+              setMessages((prev) => {
+                if (assistantIndex >= prev.length) return prev
+
+                const updated = [...prev]
+                updated[assistantIndex] = {
+                  role: 'assistant',
+                  content: pendingContentRef,
+                }
+                messagesRef.current = updated
+                return updated
+              })
+            })
+          }
         }
 
         while (true) {
