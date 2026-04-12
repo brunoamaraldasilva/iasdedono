@@ -12,6 +12,7 @@ export function useAuth() {
   const [error, setError] = useState<string | null>(null)
   const broadcastChannelRef = useRef<BroadcastChannel | null>(null)
   const initCheckRef = useRef(false)
+  const processedSessionRef = useRef<string | null>(null)  // Track which session we've already processed
 
   useEffect(() => {
     // Previne múltiplas execuções
@@ -156,6 +157,17 @@ export function useAuth() {
           console.log('[AUTH] Initial session loaded from cookies (no HTTP request)')
         }
 
+        // CRITICAL FIX: Only process if session ID changed (prevents infinite loops)
+        // onAuthStateChange fires multiple events (SIGNED_IN, INITIAL_SESSION) for same session
+        // We only want to process each unique session once
+        const currentSessionId = session?.user?.id || 'NONE'
+        if (currentSessionId === processedSessionRef.current) {
+          console.log('[AUTH-GUARD] Session already processed, skipping duplicate processing')
+          return
+        }
+        processedSessionRef.current = currentSessionId
+        console.log('[AUTH-GUARD] New session detected, processing...')
+
         if (session?.user) {
           console.log('[AUTH-PATH-A] User is logged in, email:', session.user.email)
 
@@ -208,6 +220,7 @@ export function useAuth() {
           }
         } else {
           console.log('[AUTH-PATH-B] No session, user not logged in')
+          processedSessionRef.current = 'NONE'  // Reset for next login
           setUser(null)
           console.log('[AUTH-PATH-B] setLoading(false) - NO SESSION')
           setLoading(false)
