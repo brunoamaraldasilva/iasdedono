@@ -28,8 +28,9 @@ function createAdminSupabaseClient() {
 }
 
 export async function GET(request: NextRequest) {
+  const requestStartTime = Date.now()
   try {
-    // Extract query parameters
+    // Extract query parameters (Route Handlers use synchronous nextUrl.searchParams)
     const searchParams = request.nextUrl.searchParams
     const conversationId = searchParams.get('conversationId')
     const agentId = searchParams.get('agentId')
@@ -43,11 +44,15 @@ export async function GET(request: NextRequest) {
       return new Response(JSON.stringify({ error: 'Missing required parameters' }), { status: 400 })
     }
 
+    console.log(`⏱️  [CHAT-STREAM] 📍 Request started (T+0ms)`)
+
     // Rate limiting
+    const rateLimitStart = Date.now()
     const rateLimitResult = rateLimit('chat', 10)
     if (!rateLimitResult.success) {
       return new Response('Rate limited', { status: 429 })
     }
+    console.log(`⏱️  [CHAT-STREAM] Rate limit check: ${Date.now() - rateLimitStart}ms`)
 
     // Initialize Supabase
     const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
@@ -62,21 +67,26 @@ export async function GET(request: NextRequest) {
     })
 
     // Get user ID
+    const authStart = Date.now()
     const { data: { user } } = await supabase.auth.getUser()
     const userId = user?.id
+    console.log(`⏱️  [CHAT-STREAM] Auth getUser: ${Date.now() - authStart}ms`)
 
     if (!userId) {
       return new Response(JSON.stringify({ error: 'User not found' }), { status: 401 })
     }
 
     // Get agent
+    const agentStart = Date.now()
     const { data: agent } = await supabase.from('agents').select('*').eq('id', agentId).single()
+    console.log(`⏱️  [CHAT-STREAM] Load agent: ${Date.now() - agentStart}ms`)
 
     if (!agent) {
       return new Response(JSON.stringify({ error: 'Agent not found or error loading agent' }), { status: 404 })
     }
 
-    console.log(`🎯 [CHAT-STREAM] Starting SSE stream for message: "${message.substring(0, 50)}"`)
+    const totalSetupTime = Date.now() - requestStartTime
+    console.log(`🎯 [CHAT-STREAM] Starting SSE stream for message: "${message.substring(0, 50)}" (setup took ${totalSetupTime}ms)`)
 
     // Create SSE stream
     const encoder = new TextEncoder()
