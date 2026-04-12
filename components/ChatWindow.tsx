@@ -184,6 +184,14 @@ export function ChatWindow({
                           li: ({ node, ...props }) => (
                             <li className="text-sm" {...props} />
                           ),
+                          a: ({ node, ...props }: any) => (
+                            <a
+                              {...props}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-[#e0521d] hover:underline cursor-pointer"
+                            />
+                          ),
                           code: ({ node, inline, ...props }: any) =>
                             inline ? (
                               <code

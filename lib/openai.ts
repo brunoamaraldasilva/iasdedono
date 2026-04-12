@@ -251,8 +251,13 @@ export async function* generateChatResponseRawStream(
 **Web Search:** Use ONLY for recent/time-sensitive info (news, prices, 2025+). NOT general knowledge.
 
 **Source Format (MANDATORY):**
-End with: ---
-**Fontes:** [Title](https://url.com)
+ALWAYS end responses with web search sources in this exact format:
+---
+**Fontes Utilizadas:**
+- [Article Title](https://url.com)
+- [Another Title](https://another-url.com)
+
+Do NOT skip this section when using web search tools!
 
 **Web Scrape:** Detailed content when URL provided.`
 
