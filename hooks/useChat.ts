@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
+import { flushSync } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import type { Agent } from '@/types/agent'
 import type { ChatMessage } from '@/types/chat'
@@ -314,8 +315,11 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
                 messagesRef.current = updated
                 assistantIndexRef.current = updated.length - 1
 
-                setLoading(false)
-                setMessages(updated)
+                // Use flushSync to ensure immediate render
+                flushSync(() => {
+                  setLoading(false)
+                  setMessages(updated)
+                })
 
                 // Store first chunk in ref
                 streamingRef.current.set(streamId, chunk)
@@ -330,10 +334,11 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
                 updated[assistantIndexRef.current].content = newContent
                 messagesRef.current = updated
 
-                // Use setTimeout to break out of event listener batching
-                setTimeout(() => {
+                // Use flushSync to force IMMEDIATE synchronous render
+                // This breaks React 18 batching and ensures word-by-word streaming
+                flushSync(() => {
                   setMessages([...updated])
-                }, 0)
+                })
               }
 
               if (chunkCount <= 5 || chunkCount % 20 === 0) {
