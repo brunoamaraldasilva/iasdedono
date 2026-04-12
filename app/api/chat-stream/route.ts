@@ -1,6 +1,6 @@
 import { NextRequest } from 'next/server'
 import { createClient } from '@supabase/supabase-js'
-import { generateChatResponseWithTools, generateConversationTitle } from '@/lib/openai'
+import { generateChatResponseRawStream, generateConversationTitle } from '@/lib/openai'
 import { searchGoogle, formatResultsForPrompt } from '@/lib/serpapi'
 import { scrapeUrl, isValidUrl, extractUrls } from '@/lib/webscraper'
 import { rateLimit } from '@/lib/rateLimit'
@@ -25,7 +25,7 @@ function createAdminSupabaseClient() {
 
 export async function GET(request: NextRequest) {
   try {
-    // Extract query parameters (synchronous in GET handlers)
+    // Extract query parameters
     const searchParams = request.nextUrl.searchParams
     const conversationId = searchParams.get('conversationId')
     const agentId = searchParams.get('agentId')
@@ -154,17 +154,41 @@ export async function GET(request: NextRequest) {
             return
           }
 
-          // Generate response with streaming
-          console.log(`🎯 [CHAT-STREAM] Starting chat with Tool Calling support...`)
+          // Tool execution callback
+          const onToolCall = async (toolName: string, toolInput: Record<string, unknown>): Promise<string> => {
+            try {
+              if (toolName === 'web_search') {
+                const query = toolInput.query as string
+                console.log(`🌐 [TOOL] Executing web_search: "${query}"`)
+                const results = await searchGoogle(query)
+                const formatted = formatResultsForPrompt(results)
+                console.log(`🌐 [TOOL] web_search returned ${results.length} results`)
+                return formatted
+              } else if (toolName === 'web_scrape') {
+                const url = toolInput.url as string
+                console.log(`📄 [TOOL] Executing web_scrape: "${url}"`)
+                const scrapedContent = await scrapeUrl(url)
+                const contentText = scrapedContent.content
+                console.log(`📄 [TOOL] web_scrape returned ${contentText.length} chars`)
+                return contentText
+              }
+              return 'Unknown tool: ' + toolName
+            } catch (error) {
+              console.error(`❌ [TOOL] Error executing ${toolName}:`, error)
+              throw error
+            }
+          }
+
+          // Generate response with RAW STREAMING (bypasses SDK buffering)
+          console.log(`🎯 [CHAT-STREAM] Starting RAW STREAMING with Tool Calling support...`)
 
           let liveChunkCount = 0
-          for await (const chunk of generateChatResponseWithTools(systemPrompt, chatMessages)) {
+          for await (const chunk of generateChatResponseRawStream(systemPrompt, chatMessages, onToolCall)) {
             fullResponse += chunk
 
-            // Send chunk via SSE
+            // Send chunk via SSE - IMMEDIATE delivery
             const sseChunk = `data: ${JSON.stringify({ content: chunk })}\n\n`
             liveChunkCount++
-            const delayStart = Date.now()
             controller.enqueue(encoder.encode(sseChunk))
 
             if (!firstChunkSent) {
@@ -173,15 +197,8 @@ export async function GET(request: NextRequest) {
               firstChunkSent = true
             }
 
-            // FIX: Add minimal delay to break TCP bundling
-            // Without this, OS bundles multiple SSE messages into single TCP packets
-            // Browser receives bundled packets → EventSource fires once per packet
-            // Result: All chunks processed in single React render cycle (no streaming UX)
-            // Solution: Minimal await breaks the tight loop and prevents bundling
-            await new Promise(resolve => setTimeout(resolve, 0))
-            const delayEnd = Date.now()
             if (liveChunkCount <= 10 || liveChunkCount % 50 === 0) {
-              console.log(`[DIAGNOSTIC-LIVE] Live chunk ${liveChunkCount}: ${chunk.length} chars, actual delay: ${delayEnd - delayStart}ms`)
+              console.log(`[DIAGNOSTIC-LIVE] Live chunk ${liveChunkCount}: ${chunk.length} chars`)
             }
           }
 

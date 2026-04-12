@@ -226,6 +226,236 @@ End with: ---
   }
 }
 
+/**
+ * Raw HTTP streaming - reads chunks directly from OpenAI API socket
+ * This bypasses SDK buffering and provides true real-time streaming
+ * Solves issue where all chunks arrive at once instead of streaming
+ */
+export async function* generateChatResponseRawStream(
+  systemPrompt: string,
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>,
+  onToolCall?: (toolName: string, toolInput: Record<string, unknown>) => Promise<string>
+) {
+  const apiKey = process.env.OPENAI_API_KEY
+  if (!apiKey) throw new Error('OPENAI_API_KEY not set')
+
+  try {
+    // Build the same tool-calling loop, but use raw streaming for final response
+    const systemWithInstructions = systemPrompt + `
+
+## Web Search & Scraping
+
+**Web Search:** Use ONLY for recent/time-sensitive info (news, prices, 2025+). NOT general knowledge.
+
+**Source Format (MANDATORY):**
+End with: ---
+**Fontes:** [Title](https://url.com)
+
+**Web Scrape:** Detailed content when URL provided.`
+
+    let requestMessages: any[] = [
+      {
+        role: 'system',
+        content: systemWithInstructions,
+      },
+      ...messages,
+    ]
+
+    let continueLoop = true
+    while (continueLoop) {
+      continueLoop = false
+
+      // Make initial request with tools enabled (non-streaming)
+      const toolResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'gpt-4o-mini',
+          messages: requestMessages,
+          temperature: 0.7,
+          max_tokens: 2000,
+          tools: [
+            {
+              type: 'function',
+              function: {
+                name: 'web_search',
+                description: 'Search the web for current information when you need up-to-date facts, recent news, or information beyond your training data.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    query: {
+                      type: 'string',
+                      description: 'The search query to send to the web search engine.',
+                    },
+                  },
+                  required: ['query'],
+                },
+              },
+            },
+            {
+              type: 'function',
+              function: {
+                name: 'web_scrape',
+                description: 'Scrape the full content of a specific URL to get detailed information.',
+                parameters: {
+                  type: 'object',
+                  properties: {
+                    url: {
+                      type: 'string',
+                      description: 'The URL to scrape. Must be a valid HTTP(S) URL.',
+                    },
+                    selector: {
+                      type: 'string',
+                      description: 'Optional CSS selector to extract specific content.',
+                    },
+                  },
+                  required: ['url'],
+                },
+              },
+            },
+          ],
+          tool_choice: 'auto',
+        }),
+      })
+
+      if (!toolResponse.ok) {
+        throw new Error(`OpenAI API error: ${toolResponse.statusText}`)
+      }
+
+      const choice = (await toolResponse.json()).choices[0]
+      const message = choice.message
+
+      // Handle tool calls
+      if (choice.finish_reason === 'tool_calls' && message.tool_calls && message.tool_calls.length > 0) {
+        console.log('🔧 [OPENAI-RAW] Agent is calling tools:', message.tool_calls.map((tc: any) => tc.function.name))
+
+        requestMessages.push({
+          role: 'assistant',
+          content: message.content || '',
+          tool_calls: message.tool_calls,
+        })
+
+        for (const toolCall of message.tool_calls) {
+          try {
+            if (!('function' in toolCall)) {
+              console.warn('[WARN] [OPENAI-RAW] Tool call missing function')
+              continue
+            }
+
+            const toolInput = JSON.parse(toolCall.function.arguments)
+            const toolResult = await onToolCall!(toolCall.function.name, toolInput)
+
+            requestMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: toolResult,
+            })
+
+            console.log('[OK] [OPENAI-RAW] Tool ' + toolCall.function.name + ' executed')
+          } catch (toolError) {
+            console.error('[ERROR] [OPENAI-RAW] Tool error:', toolError)
+            requestMessages.push({
+              role: 'tool',
+              tool_call_id: toolCall.id,
+              content: 'Error: ' + (toolError instanceof Error ? toolError.message : 'Unknown'),
+            })
+          }
+        }
+
+        continueLoop = true
+      } else {
+        // No tool calls - use raw streaming for final response
+        console.log('[OPENAI-RAW] 🚀 Making RAW STREAMING request (bypassing SDK buffering)')
+        const streamStartTime = Date.now()
+
+        const streamResponse = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: requestMessages,
+            temperature: 0.7,
+            max_tokens: 2000,
+            stream: true,
+          }),
+        })
+
+        if (!streamResponse.ok) {
+          throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
+        }
+
+        const reader = streamResponse.body!.getReader()
+        const decoder = new TextDecoder()
+        let buffer = ''
+        let chunkCount = 0
+        let totalContent = ''
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read()
+            if (done) break
+
+            // Decode the chunk and add to buffer
+            buffer += decoder.decode(value, { stream: true })
+            const lines = buffer.split('\n')
+
+            // Process all complete lines
+            for (let i = 0; i < lines.length - 1; i++) {
+              const line = lines[i].trim()
+
+              // Skip empty lines
+              if (!line) continue
+
+              // Check for [DONE] marker
+              if (line === 'data: [DONE]') {
+                console.log('[OPENAI-RAW] ✅ Stream complete: [DONE] received')
+                break
+              }
+
+              // Parse SSE format: "data: {json}"
+              if (line.startsWith('data: ')) {
+                try {
+                  const jsonStr = line.substring(6)
+                  const parsed = JSON.parse(jsonStr)
+
+                  const content = parsed.choices?.[0]?.delta?.content || ''
+                  if (content) {
+                    chunkCount++
+                    totalContent += content
+                    if (chunkCount <= 5 || chunkCount % 20 === 0) {
+                      console.log(`[OPENAI-RAW] 📦 Chunk ${chunkCount}: ${content.length} chars, total: ${totalContent.length}`)
+                    }
+                    yield content
+                  }
+                } catch (parseError) {
+                  // Silently skip parse errors (sometimes OpenAI sends extra whitespace)
+                }
+              }
+            }
+
+            // Keep the last incomplete line in buffer
+            buffer = lines[lines.length - 1]
+          }
+        } finally {
+          reader.releaseLock()
+        }
+
+        const totalTime = Date.now() - streamStartTime
+        console.log(`[OPENAI-RAW] ✅ Raw stream complete: ${chunkCount} chunks, ${totalContent.length} chars in ${totalTime}ms`)
+      }
+    }
+  } catch (error) {
+    console.error('[OPENAI-RAW] Error:', error)
+    throw error
+  }
+}
+
 export async function transcribeAudio(audioFile: File) {
   try {
     const response = await openai.audio.transcriptions.create({
