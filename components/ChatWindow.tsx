@@ -12,7 +12,6 @@ interface ChatWindowProps {
   loading: boolean
   isLoadingMessages?: boolean
   agentName?: string
-  onContentElementRef?: (ref: HTMLDivElement | null) => void
 }
 
 interface SourceData {
@@ -25,7 +24,6 @@ export function ChatWindow({
   loading,
   isLoadingMessages = false,
   agentName = 'Assistant',
-  onContentElementRef,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const contentElementRef = useRef<HTMLDivElement | null>(null)
@@ -163,7 +161,6 @@ export function ChatWindow({
                         ref={(el) => {
                           if (el && index === messages.length - 1) {
                             contentElementRef.current = el
-                            onContentElementRef?.(el)
                           }
                         }}
                         className="text-xs md:text-sm break-words prose prose-sm prose-invert max-w-none"

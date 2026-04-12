@@ -1,69 +1,58 @@
 'use client'
 
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { flushSync } from 'react-dom'
 import { supabase } from '@/lib/supabase'
 import type { Agent } from '@/types/agent'
 import type { ChatMessage } from '@/types/chat'
 
-export function useChat(conversationId: string, onContentElementRef?: (ref: HTMLDivElement | null) => void) {
+type SsePayload = {
+  content?: string
+  error?: string
+  done?: boolean
+}
+
+export function useChat(conversationId: string) {
   const [messages, setMessages] = useState<ChatMessage[]>([])
   const [agent, setAgent] = useState<Agent | null>(null)
   const [conversationTitle, setConversationTitle] = useState<string>('')
   const [loading, setLoading] = useState(false)
   const [isLoadingMessages, setIsLoadingMessages] = useState(true)
   const [error, setError] = useState<string | null>(null)
+
   const subscriptionRef = useRef<any>(null)
   const messagesRef = useRef<ChatMessage[]>([])
-  const streamingRef = useRef<Map<string, string>>(new Map())
   const isMountedRef = useRef(true)
-  const assistantIndexRef = useRef<number>(-1)
-  const contentElementRef = useRef<HTMLDivElement | null>(null)
+  const abortControllerRef = useRef<AbortController | null>(null)
 
-
-  // Load conversation and agent on mount
   useEffect(() => {
     isMountedRef.current = true
-    console.log(`[PHASE 1] Hook mounted for conversation: ${conversationId}`)
 
     const loadConversation = async () => {
       try {
-        // Limpar subscription anterior
         if (subscriptionRef.current) {
           subscriptionRef.current.unsubscribe()
           subscriptionRef.current = null
         }
 
-        if (!isMountedRef.current) return
-
         setIsLoadingMessages(true)
         setError(null)
 
-        // Get conversation first (needed for agent_id)
-        const conversationPromise = supabase
+        const { data: conversation, error: convError } = await supabase
           .from('conversations')
           .select('*')
           .eq('id', conversationId)
           .single()
 
-        const { data: conversation, error: convError } = await conversationPromise
-
         if (convError) throw convError
+
         if (!conversation) {
           setError('Conversa não encontrada')
           setIsLoadingMessages(false)
           return
         }
 
-        if (!isMountedRef.current) return
-
-        // OPTIMIZATION: Load agent and messages in parallel (no dependencies between them)
         const loadAgentPromise = conversation.agent_id
-          ? supabase
-              .from('agents')
-              .select('*')
-              .eq('id', conversation.agent_id)
-              .single()
+          ? supabase.from('agents').select('*').eq('id', conversation.agent_id).single()
           : Promise.resolve({ data: null, error: null })
 
         const loadMessagesPromise = supabase
@@ -72,7 +61,6 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
           .eq('conversation_id', conversationId)
           .order('created_at', { ascending: true })
 
-        // Wait for both in parallel
         const [agentResult, messagesResult] = await Promise.all([
           loadAgentPromise,
           loadMessagesPromise,
@@ -90,33 +78,34 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
 
         if (messagesError) throw messagesError
 
-        // Set agent if it exists
         if (agentData) {
           setAgent(agentData as Agent)
         }
 
         setConversationTitle(conversation.title)
 
-        const loadedMessages = messagesData?.map((msg: any) => {
-          const baseMessage: ChatMessage = {
-            role: msg.role as 'user' | 'assistant',
-            content: msg.content,
-          }
+        const loadedMessages =
+          messagesData?.map((msg: any) => {
+            const baseMessage: ChatMessage = {
+              role: msg.role as 'user' | 'assistant',
+              content: msg.content,
+            }
 
-          // Restore attached documents if they exist
-          if (msg.document_ids && msg.document_ids.length > 0) {
-            baseMessage.attachedDocuments = msg.document_ids.map((id: string) => {
-              // Try to find document name from ID (format: id:filename)
-              const parts = id.split(':')
-              return {
-                id: parts[0],
-                name: parts.length > 1 ? parts.slice(1).join(':') : `Document ${id.substring(0, 8)}`
-              }
-            })
-          }
+            if (msg.document_ids && msg.document_ids.length > 0) {
+              baseMessage.attachedDocuments = msg.document_ids.map((id: string) => {
+                const parts = id.split(':')
+                return {
+                  id: parts[0],
+                  name:
+                    parts.length > 1
+                      ? parts.slice(1).join(':')
+                      : `Document ${id.substring(0, 8)}`,
+                }
+              })
+            }
 
-          return baseMessage
-        }) || []
+            return baseMessage
+          }) || []
 
         if (!isMountedRef.current) return
 
@@ -124,7 +113,6 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
         messagesRef.current = loadedMessages
         setIsLoadingMessages(false)
 
-        // Criar nova subscription com ID único
         const channelName = `conversation:${conversationId}:${Date.now()}`
         const channel = supabase
           .channel(channelName, {
@@ -160,219 +148,245 @@ export function useChat(conversationId: string, onContentElementRef?: (ref: HTML
 
     loadConversation()
 
-    // Cleanup function
     return () => {
       isMountedRef.current = false
+
       if (subscriptionRef.current) {
         subscriptionRef.current.unsubscribe()
         subscriptionRef.current = null
       }
+
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort()
+        abortControllerRef.current = null
+      }
     }
   }, [conversationId])
 
-  const sendMessage = useCallback(async (content: string, documentIds?: string[], documentNames?: string[], useWebSearch?: boolean) => {
-    if (!agent || !agent.id) {
-      setError('Agente não está carregado. Tente recarregar a página.')
-      return
-    }
-
-    if (!content.trim()) return
-
-    try {
-      setLoading(true)
-      setError(null)
-
-      // Check if this is the first message BEFORE adding to state
-      const isFirstMessage = messagesRef.current.length === 0
-      console.log('Sending message:', { isFirstMessage, messageCount: messagesRef.current.length, documentIds })
-
-      // Add user message to state and DB
-      const userMessage: ChatMessage = {
-        role: 'user',
-        content,
-        attachedDocuments: documentIds && documentIds.length > 0
-          ? documentIds.map((id, idx) => ({ id, name: documentNames?.[idx] || `Document ${idx + 1}` }))
-          : undefined
-      }
-      const updatedMessages = [...messagesRef.current, userMessage]
-      setMessages(updatedMessages)
-      messagesRef.current = updatedMessages
-
-      // Save user message to DB (with document metadata if present)
-      const messageData: any = {
-        conversation_id: conversationId,
-        role: 'user',
-        content,
+  const sendMessage = useCallback(
+    async (
+      content: string,
+      documentIds?: string[],
+      documentNames?: string[],
+      useWebSearch?: boolean
+    ) => {
+      if (!agent || !agent.id) {
+        setError('Agente não está carregado. Tente recarregar a página.')
+        return
       }
 
-      // Store document IDs with names encoded as "id:filename"
-      if (documentIds && documentIds.length > 0) {
-        messageData.document_ids = documentIds.map((id, idx) =>
-          `${id}:${documentNames?.[idx] || `Document ${idx + 1}`}`
-        )
-      }
+      if (!content.trim()) return
 
-      const { error: insertError } = await supabase
-        .from('messages')
-        .insert([messageData])
+      try {
+        setLoading(true)
+        setError(null)
 
-      if (insertError) throw insertError
+        const isFirstMessage = messagesRef.current.length === 0
 
-      // Create unique stream ID for this message
-      const streamId = `${conversationId}-${Date.now()}`
+        const userMessage: ChatMessage = {
+          role: 'user',
+          content,
+          attachedDocuments:
+            documentIds && documentIds.length > 0
+              ? documentIds.map((id, idx) => ({
+                  id,
+                  name: documentNames?.[idx] || `Document ${idx + 1}`,
+                }))
+              : undefined,
+        }
 
-      // Get session and access token
-      const { data: { session } } = await supabase.auth.getSession()
-      const accessToken = session?.access_token
+        const updatedMessages = [...messagesRef.current, userMessage]
+        setMessages(updatedMessages)
+        messagesRef.current = updatedMessages
 
-      if (!accessToken) {
-        throw new Error('Sessão expirada. Por favor, recarregue a página e faça login novamente.')
-      }
+        const messageData: any = {
+          conversation_id: conversationId,
+          role: 'user',
+          content,
+        }
 
-      // Keep loading state visible until first chunk arrives
-      // Don't add empty assistant message yet - add it when first chunk arrives
-      setLoading(true)
-      streamingRef.current.set(streamId, '')
+        if (documentIds && documentIds.length > 0) {
+          messageData.document_ids = documentIds.map(
+            (id, idx) => `${id}:${documentNames?.[idx] || `Document ${idx + 1}`}`
+          )
+        }
 
-      assistantIndexRef.current = -1  // Will be set when first chunk arrives
+        const { error: insertError } = await supabase.from('messages').insert([messageData])
 
-      // Use Server-Sent Events for streaming
-      const sseStartTime = Date.now()
-      console.log(`🎯 [SSE] Iniciando SSE stream para /api/chat-stream`)
+        if (insertError) throw insertError
 
-      return new Promise<void>((resolve, reject) => {
-        const eventSource = new EventSource(
-          `/api/chat-stream?${new URLSearchParams({
+        const { data: sessionData } = await supabase.auth.getSession()
+        const accessToken = sessionData.session?.access_token
+
+        if (!accessToken) {
+          throw new Error('Sessão expirada. Por favor, recarregue a página e faça login novamente.')
+        }
+
+        const assistantMessage: ChatMessage = {
+          role: 'assistant',
+          content: '',
+        }
+
+        const messagesWithAssistant = [...messagesRef.current, assistantMessage]
+        const assistantIndex = messagesWithAssistant.length - 1
+
+        setMessages(messagesWithAssistant)
+        messagesRef.current = messagesWithAssistant
+
+        const abortController = new AbortController()
+        abortControllerRef.current = abortController
+
+        const response = await fetch('/api/chat', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${accessToken}`,
+          },
+          body: JSON.stringify({
             conversationId,
             agentId: agent.id,
             message: content,
-            isFirstMessage: String(isFirstMessage),
-            documentIds: documentIds?.join(',') || '',
-            token: accessToken,
-          }).toString()}`
-        )
+            isFirstMessage,
+            documentIds,
+            useWebSearch,
+          }),
+          signal: abortController.signal,
+        })
 
-        let chunkCount = 0
-        let totalChars = 0
-        let firstChunkReceived = false
-
-        eventSource.addEventListener('message', (event: MessageEvent) => {
+        if (!response.ok) {
+          let errorMessage = 'Erro ao processar mensagem'
           try {
-            console.log(`[PHASE 3] EventSource message received:`, {
-              dataLength: event.data.length,
-              isComplete: event.data === 'data: [DONE]' || event.data === '[DONE]',
-              preview: event.data.substring(0, 50)
-            })
-
-            if (event.data === 'data: [DONE]' || event.data === '[DONE]') {
-              const totalTime = Date.now() - sseStartTime
-              console.log(`✅ [SSE] Stream completo!`)
-              console.log(`   Total chunks: ${chunkCount}`)
-              console.log(`   Total chars: ${totalChars}`)
-              console.log(`   Total time: ${totalTime}ms`)
-
-              // Get final accumulated content
-              const finalContent = streamingRef.current.get(streamId) || ''
-
-              // Update messagesRef with final content for DB persistence
-              if (assistantIndexRef.current >= 0 && assistantIndexRef.current < messagesRef.current.length) {
-                messagesRef.current[assistantIndexRef.current].content = finalContent
-                // Final update to React state
-                const updatedMessages = [...messagesRef.current]
-                setMessages(updatedMessages)
-              }
-
-              setLoading(false)
-              eventSource.close()
-
-              // After message completes, emit event to refresh conversations list
-              if (isFirstMessage) {
-                console.log('🔄 [HOOK] First message complete, triggering sidebar refresh...')
-                window.dispatchEvent(new CustomEvent('conversationTitleUpdated', { detail: { conversationId } }))
-              }
-
-              resolve()
-              return
-            }
-
-            const data = JSON.parse(event.data)
-            if (data.content) {
-              const chunk = data.content
-              chunkCount++
-              totalChars += chunk.length
-
-              // CREATE BALLOON ON FIRST CHUNK (render once)
-              if (!firstChunkReceived) {
-                firstChunkReceived = true
-                console.log(`📥 [SSE] First chunk received, creating assistant message balloon`)
-
-                // Create the assistant message with first chunk
-                const assistantMessage: ChatMessage = {
-                  role: 'assistant',
-                  content: chunk, // Start with first chunk immediately
-                }
-                const updated = [...messagesRef.current, assistantMessage]
-                messagesRef.current = updated
-                assistantIndexRef.current = updated.length - 1
-
-                // Use flushSync to ensure immediate render
-                flushSync(() => {
-                  setLoading(false)
-                  setMessages(updated)
-                })
-
-                // Store first chunk in ref
-                streamingRef.current.set(streamId, chunk)
-              } else {
-                // Accumulate chunks in ref
-                const current = streamingRef.current.get(streamId) || ''
-                const newContent = current + chunk
-                streamingRef.current.set(streamId, newContent)
-
-                // Update React state EVERY chunk for true real-time streaming
-                const updated = [...messagesRef.current]
-                updated[assistantIndexRef.current].content = newContent
-                messagesRef.current = updated
-
-                // Use flushSync to force IMMEDIATE synchronous render
-                // This breaks React 18 batching and ensures word-by-word streaming
-                flushSync(() => {
-                  setMessages([...updated])
-                })
-              }
-
-              if (chunkCount <= 5 || chunkCount % 20 === 0) {
-                console.log(`📦 [SSE] Chunk ${chunkCount}: ${chunk.length} chars`)
-              }
-
-              console.log(`[PHASE 3.6] Streaming update ${chunkCount}: ${streamingRef.current.get(streamId)?.length || 0} total chars`)
-            }
-          } catch (error) {
-            console.error('[SSE] Error parsing message:', error)
+            const errorData = await response.json()
+            errorMessage = errorData.error || errorMessage
+          } catch {
+            // noop
           }
-        })
+          throw new Error(errorMessage)
+        }
 
-        eventSource.addEventListener('error', (error: Event) => {
-          console.error('[SSE] Stream error:', error)
-          eventSource.close()
-          reject(new Error('SSE stream error'))
-        })
-      }).catch((err) => {
-        throw err
-      })
-    } catch (err) {
-      const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido'
-      console.error('Error sending message:', errorMsg)
-      setError(errorMsg)
-      setLoading(false)
-      // Remove last user message on error
-      setMessages((prev) => {
-        const updated = prev.slice(0, -1)
-        messagesRef.current = updated
-        return updated
-      })
-    }
-  }, [agent, conversationId])
+        const reader = response.body?.getReader()
+        if (!reader) {
+          throw new Error('Erro ao iniciar streaming')
+        }
 
-  return { messages, agent, conversationTitle, loading, isLoadingMessages, error, sendMessage }
+        const decoder = new TextDecoder()
+        let sseBuffer = ''
+        let assistantContent = ''
+
+        const applyAssistantContent = (nextContent: string) => {
+          setMessages((prev) => {
+            if (assistantIndex >= prev.length) return prev
+
+            const updated = [...prev]
+            updated[assistantIndex] = {
+              role: 'assistant',
+              content: nextContent,
+            }
+            messagesRef.current = updated
+            return updated
+          })
+        }
+
+        while (true) {
+          const { done, value } = await reader.read()
+
+          if (done) break
+
+          sseBuffer += decoder.decode(value, { stream: true })
+
+          const events = sseBuffer.split('\n\n')
+          sseBuffer = events.pop() || ''
+
+          for (const rawEvent of events) {
+            const lines = rawEvent.split('\n')
+            let eventName = 'message'
+            const dataLines: string[] = []
+
+            for (const line of lines) {
+              if (line.startsWith('event:')) {
+                eventName = line.slice(6).trim()
+              } else if (line.startsWith('data:')) {
+                dataLines.push(line.slice(5).trim())
+              }
+            }
+
+            if (dataLines.length === 0) continue
+
+            const dataText = dataLines.join('\n')
+            let payload: SsePayload
+
+            try {
+              payload = JSON.parse(dataText)
+            } catch {
+              continue
+            }
+
+            if (eventName === 'error' || payload.error) {
+              throw new Error(payload.error || 'Erro no streaming')
+            }
+
+            if (eventName === 'done' || payload.done) {
+              continue
+            }
+
+            if (payload.content) {
+              assistantContent += payload.content
+              applyAssistantContent(assistantContent)
+            }
+          }
+        }
+
+        if (sseBuffer.trim()) {
+          const lines = sseBuffer.split('\n')
+          const dataLines = lines
+            .filter((line) => line.startsWith('data:'))
+            .map((line) => line.slice(5).trim())
+
+          if (dataLines.length > 0) {
+            try {
+              const payload = JSON.parse(dataLines.join('\n')) as SsePayload
+              if (payload.content) {
+                assistantContent += payload.content
+                applyAssistantContent(assistantContent)
+              }
+            } catch {
+              // noop
+            }
+          }
+        }
+
+        if (isFirstMessage) {
+          window.dispatchEvent(
+            new CustomEvent('conversationTitleUpdated', {
+              detail: { conversationId },
+            })
+          )
+        }
+      } catch (err) {
+        const errorMsg = err instanceof Error ? err.message : 'Erro desconhecido'
+        console.error('Error sending message:', errorMsg)
+        setError(errorMsg)
+
+        setMessages((prev) => {
+          const updated = prev.slice(0, -1)
+          messagesRef.current = updated
+          return updated
+        })
+      } finally {
+        abortControllerRef.current = null
+        setLoading(false)
+      }
+    },
+    [agent, conversationId]
+  )
+
+  return {
+    messages,
+    agent,
+    conversationTitle,
+    loading,
+    isLoadingMessages,
+    error,
+    sendMessage,
+  }
 }

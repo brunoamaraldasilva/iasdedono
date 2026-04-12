@@ -1,6 +1,6 @@
 'use client'
 
-import { use, useRef, useState, useCallback } from 'react'
+import { use, useState } from 'react'
 import { useChat } from '@/hooks/useChat'
 import { ChatWindow } from '@/components/ChatWindow'
 import { MessageInput } from '@/components/MessageInput'
@@ -13,14 +13,8 @@ interface ChatPageProps {
 
 export default function ChatPage({ params }: ChatPageProps) {
   const { id } = use(params)
-  const contentElementRef = useRef<HTMLDivElement | null>(null)
 
-  // Callback that ChatWindow will call to register the content element ref
-  const handleContentElementRef = useCallback((ref: HTMLDivElement | null) => {
-    contentElementRef.current = ref
-  }, [])
-
-  const { messages, agent, conversationTitle, loading, isLoadingMessages, error, sendMessage } = useChat(id, handleContentElementRef)
+  const { messages, agent, conversationTitle, loading, isLoadingMessages, error, sendMessage } = useChat(id)
   const [isSending, setIsSending] = useState(false)
 
   const handleSendMessage = async (content: string, documentIds?: string[], documentNames?: string[]) => {
@@ -50,7 +44,6 @@ export default function ChatPage({ params }: ChatPageProps) {
           loading={loading}
           isLoadingMessages={isLoadingMessages}
           agentName={agent?.name || 'Assistant'}
-          onContentElementRef={handleContentElementRef}
         />
 
         <MessageInput
