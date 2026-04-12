@@ -377,7 +377,7 @@ export function useChat(conversationId: string) {
               const payload = JSON.parse(dataLines.join('\n')) as SsePayload
               if (payload.content) {
                 assistantContent += payload.content
-                applyAssistantContent(assistantContent)
+                updateAssistantMessage(assistantContent)
               }
             } catch {
               // noop
