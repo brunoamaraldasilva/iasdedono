@@ -159,6 +159,26 @@ export async function POST(request: NextRequest) {
       systemPrompt += `\n\n## Materiais do Agente:\n${materialsText}`
     }
 
+    // Load documents attached to this message
+    const documentsStart = Date.now()
+    if (documentIds && documentIds.length > 0) {
+      const { data: documents } = await supabase
+        .from('documents')
+        .select('id, filename, extracted_text')
+        .in('id', documentIds)
+        .order('created_at', { ascending: true })
+      console.log(`[⏱️  DOCUMENTS-QUERY] Completed in ${Date.now() - documentsStart}ms`)
+
+      if (documents && documents.length > 0) {
+        const documentsText = documents
+          .map((d: any) => `### Documento: ${d.filename}\n${d.extracted_text || '(conteúdo não processado)'}`)
+          .join('\n\n')
+        systemPrompt += `\n\n## Documentos do Usuário:\n${documentsText}`
+      }
+    } else {
+      console.log(`[⏱️  DOCUMENTS-QUERY] Skipped - no documentIds provided`)
+    }
+
     const messagesStart = Date.now()
     const { data: recentMessages } = await supabase
       .from('messages')
