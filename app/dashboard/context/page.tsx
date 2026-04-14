@@ -31,6 +31,7 @@ export default function ContextPage() {
   const [completion, setCompletion] = useState(0)
   const [saving, setSaving] = useState(false)
   const [loading, setLoading] = useState(true)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Carregar contexto ao montar
   useEffect(() => {
@@ -38,53 +39,50 @@ export default function ContextPage() {
     loadContext()
   }, [user])
 
-  // Auto-save com debounce
-  useEffect(() => {
-    if (!context || !user || saving) return
+  async function saveContext() {
+    if (!context || !user) return
 
-    const timer = setTimeout(async () => {
-      setSaving(true)
-      try {
-        console.log('💾 [CONTEXT] Attempting to save with user_id:', user.id)
-        console.log('💾 [CONTEXT] Data to save:', context)
+    setSaving(true)
+    setSaveError(null)
+    try {
+      console.log('💾 [CONTEXT] Saving with user_id:', user.id)
+      console.log('💾 [CONTEXT] Data to save:', context)
 
-        // Get auth token
-        const { data: { session } } = await supabase.auth.getSession()
-        if (!session?.access_token) {
-          throw new Error('Session expired')
-        }
-
-        // Call backend API to save (bypasses RLS)
-        const response = await fetch('/api/context/save', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${session.access_token}`,
-          },
-          body: JSON.stringify(context),
-        })
-
-        if (!response.ok) {
-          const errorData = await response.json()
-          throw new Error(errorData.error || 'Failed to save context')
-        }
-
-        const result = await response.json()
-        console.log('✅ [CONTEXT] Saved successfully:', result)
-
-        if (result.completion_percentage !== undefined) {
-          setCompletion(result.completion_percentage)
-        }
-      } catch (err) {
-        const errorMsg = err instanceof Error ? err.message : JSON.stringify(err)
-        console.error('❌ Error saving context:', errorMsg)
-      } finally {
-        setSaving(false)
+      // Get auth token
+      const { data: { session } } = await supabase.auth.getSession()
+      if (!session?.access_token) {
+        throw new Error('Session expired')
       }
-    }, 1000) // Salvar 1 segundo depois de parar de digitar
 
-    return () => clearTimeout(timer)
-  }, [context, user])
+      // Call backend API to save (bypasses RLS)
+      const response = await fetch('/api/context/save', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify(context),
+      })
+
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.error || 'Failed to save context')
+      }
+
+      const result = await response.json()
+      console.log('✅ [CONTEXT] Saved successfully:', result)
+
+      if (result.completion_percentage !== undefined) {
+        setCompletion(result.completion_percentage)
+      }
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : JSON.stringify(err)
+      console.error('❌ Error saving context:', errorMsg)
+      setSaveError(errorMsg)
+    } finally {
+      setSaving(false)
+    }
+  }
 
   async function loadContext() {
     try {
@@ -218,7 +216,7 @@ export default function ContextPage() {
           {/* Description */}
           <div>
             <label className="block text-sm md:text-base text-white font-semibold mb-2">
-              Descrição do Negócio
+              Descrição do negócio (quanto mais profundo, melhor)
             </label>
             <textarea
               value={context.description || ''}
@@ -356,12 +354,28 @@ export default function ContextPage() {
             />
           </div>
 
-          {/* Status Messages */}
-          <div className="pt-4 md:pt-6 border-t" style={{ borderColor: '#333333' }}>
-            {saving && (
-              <p className="text-xs md:text-sm text-gray-400 mb-2">💾 Salvando...</p>
+          {/* Save Button and Status */}
+          <div className="pt-6 md:pt-8 border-t flex flex-col gap-4" style={{ borderColor: '#333333' }}>
+            <button
+              onClick={saveContext}
+              disabled={saving || !context}
+              className="px-6 py-3 rounded-lg font-semibold transition w-full md:w-auto text-white text-sm md:text-base"
+              style={{
+                backgroundColor: saving ? '#666666' : '#e0521d',
+                opacity: saving ? 0.7 : 1,
+                cursor: saving ? 'not-allowed' : 'pointer'
+              }}
+            >
+              {saving ? '💾 Salvando...' : '💾 Salvar'}
+            </button>
+
+            {saveError && (
+              <p className="text-xs md:text-sm" style={{ color: '#ff6b6b' }}>
+                ❌ Erro ao salvar: {saveError}
+              </p>
             )}
-            {completion >= 75 && !saving && (
+
+            {completion >= 75 && !saving && !saveError && (
               <p className="text-xs md:text-sm font-semibold" style={{ color: '#10b981' }}>
                 ✓ Contexto suficientemente preenchido! Seus assistentes agora têm informações melhores.
               </p>
