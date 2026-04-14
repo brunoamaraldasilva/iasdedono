@@ -53,6 +53,7 @@ export async function searchGoogle(
     num?: number // Number of results (default: 5)
     gl?: string // Country code (default: 'br')
     hl?: string // Language (default: 'pt-br')
+    recency?: 'day' | 'week' | 'month' | 'year' | 'any' // Default: 'month' (2026 preferred)
   }
 ): Promise<SearchResult[]> {
   if (!SERPAPI_KEY) {
@@ -62,6 +63,18 @@ export async function searchGoogle(
   try {
     console.log('🔍 [SERPAPI] Searching:', query)
 
+    // Map recency options to SerpAPI tbs parameter
+    // tbs = "time-based search"
+    const recencyMap = {
+      day: 'qdr:d',   // Last 24 hours
+      week: 'qdr:w',  // Last week
+      month: 'qdr:m', // Last month (DEFAULT - prefers 2026)
+      year: 'qdr:y',  // Last year
+      any: undefined, // No time restriction
+    }
+
+    const tbs = recencyMap[options?.recency || 'month']
+
     const response = await axios.get<SerpAPIResponse>(SERPAPI_BASE_URL, {
       params: {
         q: query,
@@ -70,6 +83,7 @@ export async function searchGoogle(
         num: options?.num || 5,
         gl: options?.gl || 'br',
         hl: options?.hl || 'pt-br',
+        ...(tbs && { tbs }), // Only include tbs if defined
       },
     })
 
@@ -82,7 +96,8 @@ export async function searchGoogle(
         link: result.link,
       }))
 
-    console.log('✅ [SERPAPI] Found', results.length, 'results')
+    const recencyLabel = options?.recency || 'month'
+    console.log(`✅ [SERPAPI] Found ${results.length} results (filtered: last ${recencyLabel})`)
     return results
   } catch (error) {
     console.error('❌ [SERPAPI] Error:', error)
