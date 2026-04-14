@@ -136,37 +136,64 @@ export function ChatWindow({
               <p className="text-gray-400 mb-6">Nenhuma mensagem ainda</p>
 
               {conversationStarters && conversationStarters.length > 0 ? (
-                <div className="space-y-3">
-                  <p className="text-sm text-gray-500 mb-4">Sugestões de conversa:</p>
-                  {conversationStarters.map((starter, idx) => (
-                    <button
-                      key={idx}
-                      onClick={async () => {
-                        if (onStarterClick) {
-                          setClickingStarter(starter)
-                          try {
-                            await onStarterClick(starter)
-                          } finally {
-                            setClickingStarter(null)
-                          }
-                        }
-                      }}
-                      disabled={clickingStarter !== null}
-                      className="w-full px-4 py-3 rounded-lg text-sm text-gray-200 text-left transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
-                      style={{
-                        backgroundColor: '#333333',
-                        borderLeft: '3px solid #e0521d'
-                      }}
-                    >
-                      {clickingStarter === starter ? '⏳ ' : '💬 '}
-                      {starter}
-                    </button>
-                  ))}
+                <div className="w-full space-y-4">
+                  <div>
+                    <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-400 mb-5 px-2">
+                      Comece por uma sugestão
+                    </h3>
+                    <div className="space-y-2">
+                      {conversationStarters.map((starter, idx) => (
+                        <button
+                          key={idx}
+                          onClick={async () => {
+                            if (onStarterClick) {
+                              setClickingStarter(starter)
+                              try {
+                                await onStarterClick(starter)
+                              } finally {
+                                setClickingStarter(null)
+                              }
+                            }
+                          }}
+                          disabled={clickingStarter !== null}
+                          className={`
+                            w-full px-4 py-3 rounded-md text-sm text-left transition-all duration-200
+                            border border-gray-600 hover:border-gray-500
+                            hover:translate-x-1 hover:shadow-md
+                            disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-x-0 disabled:hover:shadow-none
+                            ${clickingStarter === starter
+                              ? 'bg-gray-700 border-gray-500'
+                              : 'bg-gray-800 text-gray-300 hover:bg-gray-750'
+                            }
+                          `}
+                          style={clickingStarter !== starter ? {
+                            backgroundColor: 'rgba(51, 51, 51, 0.5)',
+                            borderColor: 'rgba(107, 114, 128, 0.5)',
+                            color: '#d1d5db'
+                          } : undefined}
+                        >
+                          <div className="flex items-center justify-between">
+                            <span className="font-medium text-gray-200">{starter}</span>
+                            {clickingStarter === starter ? (
+                              <span className="text-xs text-gray-400 ml-2">Processando...</span>
+                            ) : (
+                              <span className="text-gray-500 text-lg">→</span>
+                            )}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <p className="text-sm text-gray-500">
-                  Comece uma conversa com {agentName}
-                </p>
+                <div>
+                  <p className="text-sm text-gray-400 mb-4">
+                    Comece uma conversa com <span className="text-gray-300 font-medium">{agentName}</span>
+                  </p>
+                  <p className="text-xs text-gray-500">
+                    Digite sua pergunta na caixa abaixo para iniciar
+                  </p>
+                </div>
               )}
             </div>
           </div>
