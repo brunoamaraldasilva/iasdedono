@@ -26,6 +26,10 @@ export default function ChatPage({ params }: ChatPageProps) {
     }
   }
 
+  const handleStarterClick = async (starter: string) => {
+    await handleSendMessage(starter)
+  }
+
   if (error) {
     return (
       <div className="h-full flex items-center justify-center">
@@ -44,6 +48,8 @@ export default function ChatPage({ params }: ChatPageProps) {
           loading={loading}
           isLoadingMessages={isLoadingMessages}
           agentName={agent?.name || 'Assistant'}
+          conversationStarters={agent?.conversation_starters || []}
+          onStarterClick={handleStarterClick}
         />
 
         <MessageInput

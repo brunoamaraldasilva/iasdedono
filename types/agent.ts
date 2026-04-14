@@ -8,6 +8,7 @@ export interface Agent {
   is_published: boolean
   is_beta: boolean
   created_by?: string
+  conversation_starters?: string[]
   created_at: string
   updated_at: string
 }

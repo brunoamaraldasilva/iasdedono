@@ -12,6 +12,8 @@ interface ChatWindowProps {
   loading: boolean
   isLoadingMessages?: boolean
   agentName?: string
+  conversationStarters?: string[]
+  onStarterClick?: (starter: string) => Promise<void>
 }
 
 interface SourceData {
@@ -24,10 +26,13 @@ export function ChatWindow({
   loading,
   isLoadingMessages = false,
   agentName = 'Assistant',
+  conversationStarters = [],
+  onStarterClick,
 }: ChatWindowProps) {
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const contentElementRef = useRef<HTMLDivElement | null>(null)
   const [messageSources, setMessageSources] = useState<Map<number, SourceData[]>>(new Map())
+  const [clickingStarter, setClickingStarter] = useState<string | null>(null)
 
   // Log whenever messages prop changes
   const renderCountRef = useRef(0)
@@ -127,11 +132,42 @@ export function ChatWindow({
           </div>
         ) : messages.length === 0 ? (
           <div className="flex items-center justify-center h-full text-center">
-            <div>
-              <p className="text-gray-400 mb-2">Nenhuma mensagem ainda</p>
-              <p className="text-sm text-gray-500">
-                Comece uma conversa com {agentName}
-              </p>
+            <div className="w-full max-w-md">
+              <p className="text-gray-400 mb-6">Nenhuma mensagem ainda</p>
+
+              {conversationStarters && conversationStarters.length > 0 ? (
+                <div className="space-y-3">
+                  <p className="text-sm text-gray-500 mb-4">Sugestões de conversa:</p>
+                  {conversationStarters.map((starter, idx) => (
+                    <button
+                      key={idx}
+                      onClick={async () => {
+                        if (onStarterClick) {
+                          setClickingStarter(starter)
+                          try {
+                            await onStarterClick(starter)
+                          } finally {
+                            setClickingStarter(null)
+                          }
+                        }
+                      }}
+                      disabled={clickingStarter !== null}
+                      className="w-full px-4 py-3 rounded-lg text-sm text-gray-200 text-left transition hover:opacity-90 disabled:opacity-50 disabled:cursor-not-allowed"
+                      style={{
+                        backgroundColor: '#333333',
+                        borderLeft: '3px solid #e0521d'
+                      }}
+                    >
+                      {clickingStarter === starter ? '⏳ ' : '💬 '}
+                      {starter}
+                    </button>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-500">
+                  Comece uma conversa com {agentName}
+                </p>
+              )}
             </div>
           </div>
         ) : (
