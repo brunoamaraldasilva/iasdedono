@@ -21,10 +21,12 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
   const [materials, setMaterials] = useState<AgentMaterial[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [newStarter, setNewStarter] = useState('')
   const [formData, setFormData] = useState({
     name: '',
     description: '',
     system_prompt: '',
+    conversation_starters: [] as string[],
   })
   const [showBetaModal, setShowBetaModal] = useState(false)
 
@@ -50,6 +52,7 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
         name: agentData.name,
         description: agentData.description,
         system_prompt: agentData.system_prompt,
+        conversation_starters: agentData.conversation_starters || [],
       })
 
       // Load materials via API (uses admin client to bypass RLS)
@@ -73,6 +76,29 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
     setFormData((prev) => ({
       ...prev,
       [name]: value,
+    }))
+  }
+
+  const handleAddStarter = () => {
+    if (!newStarter.trim()) {
+      toast.error('Digite algo para adicionar')
+      return
+    }
+    if (formData.conversation_starters.includes(newStarter.trim())) {
+      toast.error('Esta sugestão já existe')
+      return
+    }
+    setFormData((prev) => ({
+      ...prev,
+      conversation_starters: [...prev.conversation_starters, newStarter.trim()],
+    }))
+    setNewStarter('')
+  }
+
+  const handleRemoveStarter = (index: number) => {
+    setFormData((prev) => ({
+      ...prev,
+      conversation_starters: prev.conversation_starters.filter((_, i) => i !== index),
     }))
   }
 
@@ -223,6 +249,64 @@ export default function EditAgentPage({ params }: EditAgentPageProps) {
                 className="w-full px-4 py-3 rounded-lg focus:ring-2 focus:ring-[#e0521d] outline-none transition resize-none font-mono text-sm text-white"
                 style={{ backgroundColor: '#161616', border: '1px solid #333333' }}
               />
+            </div>
+
+            {/* Conversation Starters */}
+            <div>
+              <label className="block text-sm font-semibold text-white mb-2">
+                Sugestões de Conversa
+              </label>
+              <div className="space-y-3">
+                {/* Input para novo starter */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newStarter}
+                    onChange={(e) => setNewStarter(e.target.value)}
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        handleAddStarter()
+                      }
+                    }}
+                    placeholder="Ex: Como aumentar minhas vendas?"
+                    className="flex-1 px-4 py-2 rounded-lg focus:ring-2 focus:ring-[#e0521d] outline-none transition text-white"
+                    style={{ backgroundColor: '#161616', border: '1px solid #333333' }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAddStarter}
+                    className="px-4 py-2 rounded-lg font-semibold text-white transition hover:opacity-90"
+                    style={{ backgroundColor: '#e0521d' }}
+                  >
+                    Adicionar
+                  </button>
+                </div>
+
+                {/* Lista de starters */}
+                <div className="space-y-2 max-h-64 overflow-y-auto">
+                  {formData.conversation_starters.length === 0 ? (
+                    <p className="text-sm text-gray-500">Nenhuma sugestão adicionada</p>
+                  ) : (
+                    formData.conversation_starters.map((starter, index) => (
+                      <div
+                        key={index}
+                        className="flex items-start justify-between p-3 rounded-lg"
+                        style={{ backgroundColor: '#161616', border: '1px solid #333333' }}
+                      >
+                        <p className="text-sm text-white flex-1">{starter}</p>
+                        <button
+                          type="button"
+                          onClick={() => handleRemoveStarter(index)}
+                          className="ml-2 text-gray-400 hover:text-[#e0521d] transition font-semibold"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ))
+                  )}
+                </div>
+              </div>
             </div>
 
             {/* Save */}

@@ -46,7 +46,7 @@ export async function PUT(request: NextRequest) {
     }
 
     // Parse request
-    const { agentId, name, description, system_prompt } = await request.json()
+    const { agentId, name, description, system_prompt, conversation_starters } = await request.json()
     if (!agentId) {
       return NextResponse.json(
         { error: 'Missing agentId' },
@@ -74,10 +74,11 @@ export async function PUT(request: NextRequest) {
     }
 
     // Prepare update data
-    const updateData: Record<string, string> = {}
+    const updateData: Record<string, any> = {}
     if (name) updateData.name = name
     if (description) updateData.description = description
     if (system_prompt) updateData.system_prompt = system_prompt
+    if (Array.isArray(conversation_starters)) updateData.conversation_starters = conversation_starters
 
     // Update agent
     const { error: updateError } = await supabaseAdmin
@@ -101,6 +102,7 @@ export async function PUT(request: NextRequest) {
           name: name !== agent.name ? name : undefined,
           description: description !== agent.description ? description : undefined,
           system_prompt: system_prompt !== agent.system_prompt ? '(atualizado)' : undefined,
+          conversation_starters: conversation_starters ? `(${conversation_starters.length} starters)` : undefined,
         },
       })
     } catch (auditError) {
