@@ -143,6 +143,22 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    // Load agent materials
+    const materialsStart = Date.now()
+    const { data: materials } = await supabase
+      .from('agent_materials')
+      .select('title, content')
+      .eq('agent_id', agentId)
+      .order('created_at', { ascending: true })
+    console.log(`[⏱️  MATERIALS-QUERY] Completed in ${Date.now() - materialsStart}ms`)
+
+    if (materials && materials.length > 0) {
+      const materialsText = materials
+        .map((m: any) => `### ${m.title}\n${m.content}`)
+        .join('\n\n')
+      systemPrompt += `\n\n## Materiais do Agente:\n${materialsText}`
+    }
+
     const messagesStart = Date.now()
     const { data: recentMessages } = await supabase
       .from('messages')
