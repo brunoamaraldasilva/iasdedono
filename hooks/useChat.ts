@@ -52,7 +52,7 @@ export function useChat(conversationId: string) {
         }
 
         const loadAgentPromise = conversation.agent_id
-          ? supabase.from('agents').select('*').eq('id', conversation.agent_id).single()
+          ? supabase.from('agents').select('*, conversation_starters').eq('id', conversation.agent_id).single()
           : Promise.resolve({ data: null, error: null })
 
         const loadMessagesPromise = supabase
