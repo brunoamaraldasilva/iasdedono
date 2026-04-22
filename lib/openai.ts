@@ -2,8 +2,13 @@ import OpenAI from 'openai'
 
 const apiKey = process.env.OPENAI_API_KEY || ''
 const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini'
-const OPENAI_TEMPERATURE = parseFloat(process.env.NEXT_PUBLIC_OPENAI_TEMPERATURE || '0.3')
-const OPENAI_MAX_TOKENS = parseInt(process.env.NEXT_PUBLIC_OPENAI_MAX_TOKENS || '800')
+
+// Parse with validation to avoid NaN
+const tempRaw = parseFloat(process.env.NEXT_PUBLIC_OPENAI_TEMPERATURE || '0.3')
+const OPENAI_TEMPERATURE = isNaN(tempRaw) ? 0.3 : tempRaw
+
+const tokensRaw = parseInt(process.env.NEXT_PUBLIC_OPENAI_MAX_TOKENS || '800')
+const OPENAI_MAX_TOKENS = isNaN(tokensRaw) ? 800 : tokensRaw
 
 console.log('[OPENAI-CONFIG] Model:', OPENAI_MODEL, '| Temp:', OPENAI_TEMPERATURE, '| MaxTokens:', OPENAI_MAX_TOKENS)
 
