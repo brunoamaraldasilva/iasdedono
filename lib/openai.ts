@@ -292,56 +292,62 @@ Do NOT skip this section when using web search tools!
       console.log(`[OPENAI-RAW] 🚀 Iteration ${iterationCount}: Quick tool-check request`)
       const toolCheckStart = Date.now()
 
+      const payload = {
+        model: OPENAI_MODEL,
+        messages: requestMessages,
+        temperature: OPENAI_TEMPERATURE,
+        max_tokens: 100, // OPTIMIZATION: Small max_tokens for quick tool check
+        tools: [
+          {
+            type: 'function',
+            function: {
+              name: 'web_search',
+              description: 'Search the web for current information.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'Search query' },
+                },
+                required: ['query'],
+              },
+            },
+          },
+          {
+            type: 'function',
+            function: {
+              name: 'web_scrape',
+              description: 'Scrape full content of a URL.',
+              parameters: {
+                type: 'object',
+                properties: {
+                  url: { type: 'string', description: 'The URL to scrape' },
+                },
+                required: ['url'],
+              },
+            },
+          },
+        ],
+        tool_choice: 'auto',
+      }
+
+      console.log('[OPENAI-RAW] 📤 Sending payload:', JSON.stringify(payload, null, 2).substring(0, 500))
+
       const toolCheckResponse = await fetch('https://api.openai.com/v1/chat/completions', {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({
-          model: OPENAI_MODEL,
-          messages: requestMessages,
-          temperature: OPENAI_TEMPERATURE,
-          max_tokens: 100, // OPTIMIZATION: Small max_tokens for quick tool check
-          tools: [
-            {
-              type: 'function',
-              function: {
-                name: 'web_search',
-                description: 'Search the web for current information.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    query: { type: 'string', description: 'Search query' },
-                  },
-                  required: ['query'],
-                },
-              },
-            },
-            {
-              type: 'function',
-              function: {
-                name: 'web_scrape',
-                description: 'Scrape full content of a URL.',
-                parameters: {
-                  type: 'object',
-                  properties: {
-                    url: { type: 'string', description: 'The URL to scrape' },
-                  },
-                  required: ['url'],
-                },
-              },
-            },
-          ],
-          tool_choice: 'auto',
-        }),
+        body: JSON.stringify(payload),
       })
 
       const toolCheckDuration = Date.now() - toolCheckStart
       console.log(`[OPENAI-RAW] ⏱️ Tool-check completed in ${toolCheckDuration}ms (status: ${toolCheckResponse.status})`)
 
       if (!toolCheckResponse.ok) {
-        throw new Error(`OpenAI API error: ${toolCheckResponse.statusText}`)
+        const errorData = await toolCheckResponse.json().catch(() => ({ error: 'Could not parse error' }))
+        console.error('[OPENAI-RAW] ❌ API Error Response:', JSON.stringify(errorData, null, 2))
+        throw new Error(`OpenAI API error: ${toolCheckResponse.statusText} - ${JSON.stringify(errorData)}`)
       }
 
       const toolCheckData = await toolCheckResponse.json()
@@ -409,7 +415,9 @@ Do NOT skip this section when using web search tools!
         console.log(`[OPENAI-RAW] ⏱️ Streaming request initialized in ${streamFetchDuration}ms (status: ${streamResponse.status})`)
 
         if (!streamResponse.ok) {
-          throw new Error(`OpenAI streaming API error: ${streamResponse.statusText}`)
+          const errorData = await streamResponse.json().catch(() => ({ error: 'Could not parse error' }))
+          console.error('[OPENAI-RAW] ❌ Streaming API Error:', JSON.stringify(errorData, null, 2))
+          throw new Error(`OpenAI streaming API error: ${streamResponse.statusText} - ${JSON.stringify(errorData)}`)
         }
 
         const reader = streamResponse.body!.getReader()
