@@ -10,7 +10,7 @@ import { createServerSupabaseClient } from '@/lib/supabase'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
 const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4.1-mini'
-const enc = encodingForModel(OPENAI_MODEL)
+const enc = encodingForModel(OPENAI_MODEL as 'gpt-4.1-mini')
 
 /**
  * Summarize a document to approximately 200 tokens
