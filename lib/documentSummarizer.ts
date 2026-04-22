@@ -9,7 +9,8 @@ import { encodingForModel } from 'js-tiktoken'
 import { createServerSupabaseClient } from '@/lib/supabase'
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-const enc = encodingForModel('gpt-4o-mini')
+const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4.1-mini'
+const enc = encodingForModel(OPENAI_MODEL)
 
 /**
  * Summarize a document to approximately 200 tokens
@@ -42,7 +43,7 @@ ${content.substring(0, 4000)}
 Forneça APENAS o resumo, sem preâmbulo.`
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: OPENAI_MODEL,
       messages: [{ role: 'user', content: prompt }],
       temperature: 0.5,
       max_tokens: targetTokens + 100,

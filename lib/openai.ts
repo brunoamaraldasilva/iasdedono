@@ -1,6 +1,9 @@
 import OpenAI from 'openai'
 
 const apiKey = process.env.OPENAI_API_KEY || ''
+const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4.1-mini'
+const OPENAI_TEMPERATURE = parseFloat(process.env.NEXT_PUBLIC_OPENAI_TEMPERATURE || '0.3')
+const OPENAI_MAX_TOKENS = parseInt(process.env.NEXT_PUBLIC_OPENAI_MAX_TOKENS || '800')
 
 // Create OpenAI client only if API key is available
 export const openai = apiKey ? new OpenAI({ apiKey }) : (null as any as OpenAI)
@@ -11,7 +14,7 @@ export async function generateChatResponse(
 ) {
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
@@ -19,8 +22,8 @@ export async function generateChatResponse(
         },
         ...messages,
       ],
-      temperature: 0.7,
-      max_tokens: 2000,
+      temperature: OPENAI_TEMPERATURE,
+      max_tokens: OPENAI_MAX_TOKENS,
     })
 
     return response.choices[0]?.message?.content || ''
@@ -78,7 +81,7 @@ export async function* generateChatResponseStream(
 ) {
   try {
     const stream = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
@@ -86,8 +89,8 @@ export async function* generateChatResponseStream(
         },
         ...messages,
       ],
-      temperature: 0.7,
-      max_tokens: 2000,
+      temperature: OPENAI_TEMPERATURE,
+      max_tokens: OPENAI_MAX_TOKENS,
       stream: true,
     })
 
@@ -135,10 +138,10 @@ End with: ---
 
       // Make initial request with tools enabled
       const response = await openai.chat.completions.create({
-        model: 'gpt-4o-mini',
+        model: OPENAI_MODEL,
         messages: requestMessages,
-        temperature: 0.7,
-        max_tokens: 2000,
+        temperature: OPENAI_TEMPERATURE,
+        max_tokens: OPENAI_MAX_TOKENS,
         tools: [WEB_SEARCH_TOOL, WEB_SCRAPE_TOOL],
         tool_choice: 'auto',
       })
@@ -194,10 +197,10 @@ End with: ---
         console.log('[OPENAI] ⏳ Making streaming request to OpenAI (stream: true)')
         const streamStartTime = Date.now()
         const stream = await openai.chat.completions.create({
-          model: 'gpt-4o-mini',
+          model: OPENAI_MODEL,
           messages: requestMessages,
-          temperature: 0.7,
-          max_tokens: 2000,
+          temperature: OPENAI_TEMPERATURE,
+          max_tokens: OPENAI_MAX_TOKENS,
           stream: true,
         })
         const streamCreatedTime = Date.now() - streamStartTime
@@ -289,9 +292,9 @@ Do NOT skip this section when using web search tools!
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          model: 'gpt-4o-mini',
+          model: OPENAI_MODEL,
           messages: requestMessages,
-          temperature: 0.7,
+          temperature: OPENAI_TEMPERATURE,
           max_tokens: 100, // OPTIMIZATION: Small max_tokens for quick tool check
           tools: [
             {
@@ -387,10 +390,10 @@ Do NOT skip this section when using web search tools!
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: 'gpt-4o-mini',
+            model: OPENAI_MODEL,
             messages: requestMessages,
-            temperature: 0.7,
-            max_tokens: 2000,
+            temperature: OPENAI_TEMPERATURE,
+            max_tokens: OPENAI_MAX_TOKENS,
             stream: true,
           }),
         })
@@ -507,7 +510,7 @@ export async function generateConversationTitle(
     console.log('🤖 OpenAI: Calling generateConversationTitle with:', { agentName, messageLength: userMessage.length })
 
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
@@ -544,7 +547,7 @@ export async function generateConversationTitle(
 export async function compressChatHistory(messages: string[]): Promise<string> {
   try {
     const response = await openai.chat.completions.create({
-      model: 'gpt-4o-mini',
+      model: OPENAI_MODEL,
       messages: [
         {
           role: 'system',
