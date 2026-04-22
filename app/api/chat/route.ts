@@ -330,8 +330,17 @@ export async function POST(request: NextRequest) {
 
           controller.close()
         } catch (error) {
-          console.error('Streaming error:', error)
-          sendSse({ error: 'Streaming error occurred' }, 'error')
+          console.error('❌ [STREAMING-ERROR] Detailed error:')
+          console.error('  Type:', error instanceof Error ? error.constructor.name : typeof error)
+          console.error('  Message:', error instanceof Error ? error.message : String(error))
+          console.error('  Stack:', error instanceof Error ? error.stack : 'N/A')
+          console.error('  Full error:', error)
+
+          try {
+            sendSse({ error: 'Streaming error occurred', details: error instanceof Error ? error.message : String(error) }, 'error')
+          } catch (sseError) {
+            console.error('Failed to send SSE error:', sseError)
+          }
           controller.close()
         }
       },
