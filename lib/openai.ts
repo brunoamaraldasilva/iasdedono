@@ -1,7 +1,7 @@
 import OpenAI from 'openai'
 
 const apiKey = process.env.OPENAI_API_KEY || ''
-const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4.1-mini'
+const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4o-mini'
 const OPENAI_TEMPERATURE = parseFloat(process.env.NEXT_PUBLIC_OPENAI_TEMPERATURE || '0.3')
 const OPENAI_MAX_TOKENS = parseInt(process.env.NEXT_PUBLIC_OPENAI_MAX_TOKENS || '800')
 
