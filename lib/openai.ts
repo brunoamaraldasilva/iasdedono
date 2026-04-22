@@ -5,6 +5,8 @@ const OPENAI_MODEL = process.env.NEXT_PUBLIC_OPENAI_MODEL || 'gpt-4.1-mini'
 const OPENAI_TEMPERATURE = parseFloat(process.env.NEXT_PUBLIC_OPENAI_TEMPERATURE || '0.3')
 const OPENAI_MAX_TOKENS = parseInt(process.env.NEXT_PUBLIC_OPENAI_MAX_TOKENS || '800')
 
+console.log('[OPENAI-CONFIG] Model:', OPENAI_MODEL, '| Temp:', OPENAI_TEMPERATURE, '| MaxTokens:', OPENAI_MAX_TOKENS)
+
 // Create OpenAI client only if API key is available
 export const openai = apiKey ? new OpenAI({ apiKey }) : (null as any as OpenAI)
 
